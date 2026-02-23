@@ -1,0 +1,1327 @@
+
+
+🗄️ BRICK MANUFACTURING ERP - COMPLETE DATABASE SCHEMA
+══════════════════════════════════════════════════════════
+📊 DATABASE MODELS TREE
+═══════════════════════
+┌─ 🔐 IAM (Identity & Access Management)
+│  └─ 👤 User
+│     ├─ Fields:
+│     │  ├─ name: String (required, maxlength: 100)
+│     │  ├─ email: String (required, unique, lowercase, email validation)
+│     │  ├─ passwordHash: String (required, select: false)
+│     │  ├─ roles: [String] (enum: ['Admin', 'Manager', 'Procurement', 'Warehouse', 'Production', 'Transport', 'Vendor', 'Worker'], default: 'Worker')
+│     │  ├─ active: Boolean (default: true)
+│     │  ├─ profile: Object
+│     │  │  ├─ phone: String
+│     │  │  ├─ address: String
+│     │  │  ├─ avatar: String
+│     │  │  ├─ department: String
+│     │  │  └─ employeeId: String
+│     │  ├─ lastLogin: Date
+│     │  └─ refreshTokens: [Object]
+│     │     ├─ token: String
+│     │     ├─ createdAt: Date (default: now)
+│     │     └─ expiresAt: Date
+│     ├─ Indexes: email (unique), roles
+│     ├─ Plugins: mongoose-paginate, auditPlugin, softDeletePlugin
+│     └─ Methods: comparePassword, generateAuthToken
+┌─ 📦 CATALOG MANAGEMENT
+│  ├─ 📂 Category
+│  │  ├─ Fields:
+│  │  │  ├─ name: String (required, maxlength: 100)
+│  │  │  ├─ parentId: ObjectId (ref: 'Category', default: null)
+│  │  │  ├─ description: String (maxlength: 500)
+│  │  │  ├─ slug: String (unique, lowercase)
+│  │  │  ├─ level: Number (default: 0)
+│  │  │  ├─ path: String (materialized path)
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  ├─ sortOrder: Number (default: 0)
+│  │  │  ├─ isSellable: Boolean (default: true)
+│  │  │  ├─ isPurchasable: Boolean (default: true)
+│  │  │  ├─ categoryType: String (enum: ['RawMaterial', 'FinishedGoods', 'Service', 'Labour', 'Transport', 'Mixed'], default: 'Mixed')
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: parentId, path, level, text (name, description)
+│  │  ├─ Virtuals: children (ref: 'Category')
+│  │  ├─ Plugins: mongoose-paginate, auditPlugin, softDeletePlugin
+│  │  └─ Hooks: pre-save (generate slug/path)
+│  │
+│  ├─ 🏷️ Tag
+│  │  ├─ Fields:
+│  │  │  ├─ name: String (required, unique, maxlength: 50)
+│  │  │  ├─ description: String (maxlength: 200)
+│  │  │  ├─ color: String (hex color code)
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  └─ sortOrder: Number (default: 0)
+│  │  ├─ Indexes: name (unique)
+│  │  └─ Plugins: auditPlugin, softDeletePlugin
+│  │
+│  ├─ 📋 Item
+│  │  ├─ Fields:
+│  │  │  ├─ name: String (required, maxlength: 200)
+│  │  │  ├─ sku: String (unique, sparse, maxlength: 50)
+│  │  │  ├─ description: String (maxlength: 1000)
+│  │  │  ├─ categoryId: ObjectId (ref: 'Category')
+│  │  │  ├─ subCategoryId: ObjectId (ref: 'Category')
+│  │  │  ├─ tags: [ObjectId] (ref: 'Tag')
+│  │  │  ├─ costType: String (enum: ['Material', 'Labour', 'Transport', 'Product', 'Service'], required)
+│  │  │  ├─ units: [Object]
+│  │  │  │  ├─ unit: String (enum: units from constants)
+│  │  │  │  ├─ conversionFactor: Number (default: 1)
+│  │  │  │  └─ isDefault: Boolean
+│  │  │  ├─ defaultUnit: String (enum: units from constants)
+│  │  │  ├─ defaultUnitPrice: Number (min: 0)
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  ├─ hsnCode: String
+│  │  │  ├─ taxRate: Number (min: 0, max: 100, default: 0)
+│  │  │  ├─ metadata: Map
+│  │  │  └─ specifications: Object
+│  │  ├─ Indexes: categoryId, subCategoryId, costType, text (name, description, sku)
+│  │  ├─ Plugins: paginatePlugin, auditPlugin, notesPlugin, softDeletePlugin
+│  │  └─ Virtuals: category, subCategory
+│  │
+│  └─ 🍳 Recipe (BOM - Bill of Materials)
+│     ├─ Fields:
+│     │  ├─ name: String (required, maxlength: 200)
+│     │  ├─ description: String (maxlength: 500)
+│     │  ├─ productId: ObjectId (ref: 'Item', required)
+│     │  ├─ version: Number (default: 1)
+│     │  ├─ isActive: Boolean (default: true)
+│     │  ├─ totalCost: Number (calculated)
+│     │  ├─ ingredients: [Object]
+│     │  │  ├─ itemId: ObjectId (ref: 'Item', required)
+│     │  │  ├─ quantity: Number (required, min: 0)
+│     │  │  ├─ unit: String (enum: units)
+│     │  │  ├─ unitCost: Number
+│     │  │  └─ totalCost: Number
+│     │  ├─ labourRequirements: [Object]
+│     │  │  ├─ labourType: String
+│     │  │  ├─ hours: Number
+│     │  │  ├─ ratePerHour: Number
+│     │  │  └─ totalCost: Number
+│     │  └─ metadata: Map
+│     ├─ Indexes: productId, isActive
+│     └─ Plugins: auditPlugin, softDeletePlugin
+┌─ 🛒 SALES MANAGEMENT
+│  ├─ 👥 Customer
+│  │  ├─ Fields:
+│  │  │  ├─ customerCode: String (unique, required, auto-generated)
+│  │  │  ├─ name: String (required, maxlength: 200)
+│  │  │  ├─ customerType: String (enum: ['Individual', 'Business', 'Contractor', 'Dealer', 'Government', 'Other'], default: 'Business')
+│  │  │  ├─ contact: Object
+│  │  │  │  ├─ phone: String (required)
+│  │  │  │  ├─ alternatePhone: String
+│  │  │  │  ├─ email: String
+│  │  │  │  ├─ whatsapp: String
+│  │  │  │  ├─ contactPerson: String
+│  │  │  │  └─ designation: String
+│  │  │  ├─ address: Object (street, city, state, pincode, country, landmark)
+│  │  │  ├─ deliveryAddresses: [Object] (multiple delivery addresses)
+│  │  │  ├─ gst: String (GST validation)
+│  │  │  ├─ pan: String
+│  │  │  ├─ creditLimit: Number (default: 0)
+│  │  │  ├─ paymentTerms: String (enum: ['Immediate', 'Net7', 'Net15', 'Net30', 'Net45', 'Net60', 'Custom'], default: 'Immediate')
+│  │  │  ├─ customPaymentDays: Number
+│  │  │  ├─ currentBalance: Number (default: 0)
+│  │  │  ├─ totalOrders: Number (default: 0)
+│  │  │  ├─ totalPurchaseValue: Number (default: 0)
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: customerCode (unique), name (text)
+│  │  ├─ Plugins: mongoose-paginate, auditPlugin, notesPlugin, softDeletePlugin
+│  │  └─ Hooks: pre-save (generate customerCode)
+│  │
+│  ├─ 📄 SalesOrder
+│  │  ├─ Fields:
+│  │  │  ├─ orderNumber: String (unique, auto-generated)
+│  │  │  ├─ customerId: ObjectId (ref: 'Customer', required)
+│  │  │  ├─ status: String (enum: ['Draft', 'Confirmed', 'Processing', 'Ready_For_Dispatch', 'Partially_Delivered', 'Delivered', 'Invoiced', 'Cancelled'], default: 'Draft')
+│  │  │  ├─ orderDate: Date (default: now)
+│  │  │  ├─ deliveryDate: Date
+│  │  │  ├─ items: [Object] (sub-schema)
+│  │  │  │  ├─ itemId: ObjectId (ref: 'Item', required)
+│  │  │  │  ├─ qty: Number (required, min: 0.01)
+│  │  │  │  ├─ unit: String (enum: units, required)
+│  │  │  │  ├─ unitPrice: Number (required)
+│  │  │  │  ├─ discountPercent: Number (default: 0)
+│  │  │  │  ├─ taxPercent: Number (default: 0)
+│  │  │  │  ├─ totalAmount: Number
+│  │  │  │  └─ deliveredQty: Number (default: 0)
+│  │  │  ├─ deliveryAddress: Object
+│  │  │  ├─ transportRequired: Boolean (default: false)
+│  │  │  ├─ transportCost: Number (default: 0)
+│  │  │  ├─ subtotal: Number
+│  │  │  ├─ taxAmount: Number
+│  │  │  ├─ discountAmount: Number
+│  │  │  ├─ totalAmount: Number
+│  │  │  ├─ notes: String
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: customerId, status, orderDate
+│  │  ├─ Plugins: mongoose-paginate, auditPlugin, notesPlugin, softDeletePlugin
+│  │  └─ Hooks: pre-save (generate orderNumber)
+│  │
+│  └─ 🧾 SalesInvoice
+│     ├─ Fields:
+│     │  ├─ invoiceNumber: String (unique, auto-generated)
+│     │  ├─ customerId: ObjectId (ref: 'Customer', required)
+│     │  ├─ salesOrderId: ObjectId (ref: 'SalesOrder')
+│     │  ├─ invoiceDate: Date (default: now)
+│     │  ├─ dueDate: Date
+│     │  ├─ status: String (enum: ['Draft', 'Sent', 'Paid', 'Overdue', 'Cancelled'], default: 'Draft')
+│     │  ├─ items: [Object] (same as SalesOrder items)
+│     │  ├─ billingAddress: Object
+│     │  ├─ shippingAddress: Object
+│     │  ├─ gstDetails: Object
+│     │  ├─ subtotal: Number
+│     │  ├─ cgstAmount: Number
+│     │  ├─ sgstAmount: Number
+│     │  ├─ igstAmount: Number
+│     │  ├─ totalAmount: Number
+│     │  ├─ paidAmount: Number (default: 0)
+│     │  ├─ balanceAmount: Number
+│     │  ├─ notes: String
+│     │  └─ metadata: Map
+│     ├─ Indexes: customerId, invoiceNumber (unique), status
+│     └─ Plugins: mongoose-paginate, auditPlugin, notesPlugin, softDeletePlugin
+┌─ 🛍️ PROCUREMENT MANAGEMENT
+│  ├─ 🏢 Vendor
+│  │  ├─ Fields:
+│  │  │  ├─ name: String (required, maxlength: 200)
+│  │  │  ├─ code: String (unique, sparse, maxlength: 20)
+│  │  │  ├─ contact: Object (phone, alternatePhone, email, contactPerson, designation)
+│  │  │  ├─ address: Object (street, city, state, pincode, country, landmark)
+│  │  │  ├─ gst: String (GST validation regex)
+│  │  │  ├─ pan: String
+│  │  │  ├─ paymentTerms: String (enum: ['Immediate', 'Net7', 'Net15', 'Net30', 'Net45', 'Net60', 'Custom'], default: 'Net30')
+│  │  │  ├─ customPaymentDays: Number
+│  │  │  ├─ creditLimit: Number (default: 0)
+│  │  │  ├─ bankDetails: Object
+│  │  │  │  ├─ bankName: String
+│  │  │  │  ├─ accountNumber: String
+│  │  │  │  ├─ ifscCode: String
+│  │  │  │  └─ accountType: String (enum: ['Current', 'Savings'])
+│  │  │  ├─ supplyCategories: [ObjectId] (ref: 'Category')
+│  │  │  ├─ supplyItems: [ObjectId] (ref: 'Item')
+│  │  │  ├─ rating: Number (min: 0, max: 5, default: 0)
+│  │  │  ├─ totalOrders: Number (default: 0)
+│  │  │  ├─ totalOrderValue: Number (default: 0)
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: code (unique, sparse), name (text)
+│  │  └─ Plugins: mongoose-paginate, auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  ├─ 📋 Estimate
+│  │  ├─ Fields:
+│  │  │  ├─ estimateNumber: String (unique, auto-generated)
+│  │  │  ├─ vendorId: ObjectId (ref: 'Vendor', required)
+│  │  │  ├─ status: String (enum: ['Draft', 'Approved', 'ConvertedToPO', 'Cancelled'], default: 'Draft')
+│  │  │  ├─ estimateDate: Date (default: now)
+│  │  │  ├─ validUntil: Date
+│  │  │  ├─ items: [Object] (similar to PO items)
+│  │  │  ├─ subtotal: Number
+│  │  │  ├─ taxAmount: Number
+│  │  │  ├─ totalAmount: Number
+│  │  │  ├─ notes: String
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: vendorId, status
+│  │  └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  └─ 📦 PurchaseOrder (PO)
+│     ├─ Fields:
+│     │  ├─ poNumber: String (unique, auto-generated)
+│     │  ├─ vendorId: ObjectId (ref: 'Vendor', required)
+│     │  ├─ estimateId: ObjectId (ref: 'Estimate')
+│     │  ├─ status: String (enum: ['Draft', 'Approved', 'PartiallyReceived', 'Completed', 'Cancelled'], default: 'Draft')
+│     │  ├─ poDate: Date (default: now)
+│     │  ├─ deliveryDate: Date
+│     │  ├─ items: [Object]
+│     │  │  ├─ itemId: ObjectId (ref: 'Item', required)
+│     │  │  ├─ qty: Number (required)
+│     │  │  ├─ unit: String (enum: units, required)
+│     │  │  ├─ unitPrice: Number (required)
+│     │  │  ├─ receivedQty: Number (default: 0)
+│     │  │  └─ totalAmount: Number
+│     │  ├─ subtotal: Number
+│     │  ├─ taxAmount: Number
+│     │  ├─ totalAmount: Number
+│     │  ├─ notes: String
+│     │  └─ metadata: Map
+│     ├─ Indexes: vendorId, status
+│     └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+┌─ 🏭 MANUFACTURING MANAGEMENT
+│  ├─ 🧱 Batch
+│  │  ├─ Fields:
+│  │  │  ├─ batchNumber: String (unique, auto-generated)
+│  │  │  ├─ recipeId: ObjectId (ref: 'Recipe', required)
+│  │  │  ├─ kilnId: ObjectId (ref: 'Kiln')
+│  │  │  ├─ status: String (enum: ['Planned', 'InProduction', 'InKiln', 'Completed', 'QualityHold'], default: 'Planned')
+│  │  │  ├─ plannedQuantity: Number (required)
+│  │  │  ├─ producedQuantity: Number (default: 0)
+│  │  │  ├─ startDate: Date
+│  │  │  ├─ completionDate: Date
+│  │  │  ├─ qualityCheck: Object
+│  │  │  ├─ labourCost: Number
+│  │  │  ├─ materialCost: Number
+│  │  │  ├─ totalCost: Number
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: recipeId, status
+│  │  └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  └─ 🔥 Kiln
+│     ├─ Fields:
+│     │  ├─ name: String (required)
+│     │  ├─ type: String (enum: ['Small', 'Medium', 'Large'], required)
+│     │  ├─ capacity: Number (required)
+│     │  ├─ status: String (enum: ['Active', 'Inactive', 'Maintenance'], default: 'Active')
+│     │  ├─ currentBatchId: ObjectId (ref: 'Batch')
+│     │  ├─ location: String
+│     │  ├─ installationDate: Date
+│     │  ├─ lastMaintenance: Date
+│     │  └─ metadata: Map
+│     ├─ Indexes: type, status
+│     └─ Plugins: auditPlugin, softDeletePlugin
+┌─ 🚛 LOGISTICS MANAGEMENT
+│  ├─ 🚚 Trip
+│  │  ├─ Fields:
+│  │  │  ├─ tripNumber: String (unique, auto-generated)
+│  │  │  ├─ vehicleType: String (enum: ['Small', 'Medium', 'Large', 'Custom'], required)
+│  │  │  ├─ driverName: String (required)
+│  │  │  ├─ driverPhone: String (required)
+│  │  │  ├─ status: String (enum: ['Scheduled', 'InTransit', 'Delivered', 'Cancelled'], default: 'Scheduled')
+│  │  │  ├─ sourceLocation: String (required)
+│  │  │  ├─ destination: String (required)
+│  │  │  ├─ distance: Number (required)
+│  │  │  ├─ scheduledDate: Date (required)
+│  │  │  ├─ actualDeparture: Date
+│  │  │  ├─ actualArrival: Date
+│  │  │  ├─ loadDetails: [Object]
+│  │  │  │  ├─ salesOrderId: ObjectId (ref: 'SalesOrder')
+│  │  │  │  ├─ itemId: ObjectId (ref: 'Item')
+│  │  │  │  ├─ quantity: Number
+│  │  │  │  └─ unit: String
+│  │  │  ├─ transportCost: Number
+│  │  │  ├─ notes: String
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: status, scheduledDate
+│  │  └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  └─ 💰 TransportRateCard
+│     ├─ Fields:
+│     │  ├─ vehicleType: String (enum: ['Small', 'Medium', 'Large', 'Custom'], required)
+│     │  ├─ distanceFrom: Number (required)
+│     │  ├─ distanceTo: Number (required)
+│     │  ├─ ratePerKm: Number (required)
+│     │  ├─ minimumCharge: Number (required)
+│     │  ├─ active: Boolean (default: true)
+│     │  ├─ effectiveFrom: Date (default: now)
+│     │  └─ metadata: Map
+│     ├─ Indexes: vehicleType, active
+│     └─ Plugins: auditPlugin
+┌─ 💰 FINANCE MANAGEMENT
+│  ├─ 📊 OperationalExpense
+│  │  ├─ Fields:
+│  │  │  ├─ expenseNumber: String (unique, auto-generated)
+│  │  │  ├─ category: String (enum: ['Office', 'Travel', 'Utilities', 'Maintenance', 'Marketing', 'Other'], required)
+│  │  │  ├─ amount: Number (required, min: 0)
+│  │  │  ├─ description: String (required)
+│  │  │  ├─ expenseDate: Date (default: now)
+│  │  │  ├─ paymentMethod: String (enum: ['Cash', 'BankTransfer', 'Cheque', 'UPI', 'Other'])
+│  │  │  ├─ paidTo: String
+│  │  │  ├─ approvedBy: ObjectId (ref: 'User')
+│  │  │  ├─ status: String (enum: ['Pending', 'Approved', 'Rejected', 'Paid'], default: 'Pending')
+│  │  │  ├─ receipt: String (file path)
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: category, status, expenseDate
+│  │  └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  ├─ 📈 CustomerLedger
+│  │  ├─ Fields:
+│  │  │  ├─ customerId: ObjectId (ref: 'Customer', required)
+│  │  │  ├─ transactionType: String (enum: ['Invoice', 'Payment', 'Credit', 'Debit', 'Adjustment'], required)
+│  │  │  ├─ transactionId: ObjectId (ref to related document)
+│  │  │  ├─ amount: Number (required)
+│  │  │  ├─ balance: Number (running balance)
+│  │  │  ├─ description: String
+│  │  │  ├─ transactionDate: Date (default: now)
+│  │  │  ├─ createdBy: ObjectId (ref: 'User')
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: customerId, transactionDate
+│  │  └─ Plugins: auditPlugin
+│  │
+│  └─ 💳 CustomerPayment
+│     ├─ Fields:
+│     │  ├─ paymentNumber: String (unique, auto-generated)
+│     │  ├─ customerId: ObjectId (ref: 'Customer', required)
+│     │  ├─ amount: Number (required, min: 0)
+│     │  ├─ paymentDate: Date (default: now)
+│     │  ├─ paymentMethod: String (enum: ['Cash', 'Cheque', 'BankTransfer', 'UPI', 'Online'], required)
+│     │  ├─ chequeNumber: String
+│     │  ├─ bankName: String
+│     │  ├─ referenceNumber: String
+│     │  ├─ receivedBy: ObjectId (ref: 'User')
+│     │  ├─ status: String (enum: ['Received', 'Deposited', 'Cleared', 'Bounced'], default: 'Received')
+│     │  ├─ appliedToInvoices: [Object]
+│     │  │  ├─ invoiceId: ObjectId (ref: 'SalesInvoice')
+│     │  │  └─ amount: Number
+│     │  ├─ notes: String
+│     │  └─ metadata: Map
+│     ├─ Indexes: customerId, paymentDate, status
+│     └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+┌─ 📦 INVENTORY MANAGEMENT
+│  ├─ 🏭 Warehouse
+│  │  ├─ Fields:
+│  │  │  ├─ name: String (required)
+│  │  │  ├─ code: String (unique, required)
+│  │  │  ├─ type: String (enum: ['Main', 'Production', 'Storage', 'Sales'], default: 'Main')
+│  │  │  ├─ location: Object (address details)
+│  │  │  ├─ capacity: Number
+│  │  │  ├─ active: Boolean (default: true)
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: code (unique), type
+│  │  └─ Plugins: auditPlugin, softDeletePlugin
+│  │
+│  ├─ 📊 Stock
+│  │  ├─ Fields:
+│  │  │  ├─ warehouseId: ObjectId (ref: 'Warehouse', required)
+│  │  │  ├─ itemId: ObjectId (ref: 'Item', required)
+│  │  │  ├─ quantity: Number (default: 0)
+│  │  │  ├─ reservedQuantity: Number (default: 0)
+│  │  │  ├─ availableQuantity: Number (calculated)
+│  │  │  ├─ unit: String (enum: units)
+│  │  │  ├─ lastUpdated: Date (default: now)
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: warehouseId + itemId (compound unique)
+│  │  └─ Plugins: auditPlugin
+│  │
+│  ├─ 📥 Receipt (Goods Receipt)
+│  │  ├─ Fields:
+│  │  │  ├─ receiptNumber: String (unique, auto-generated)
+│  │  │  ├─ poId: ObjectId (ref: 'PurchaseOrder', required)
+│  │  │  ├─ status: String (enum: ['Pending', 'Inspected', 'Accepted', 'Rejected', 'Partial'], default: 'Pending')
+│  │  │  ├─ receiptDate: Date (default: now)
+│  │  │  ├─ receivedBy: ObjectId (ref: 'User')
+│  │  │  ├─ inspectedBy: ObjectId (ref: 'User')
+│  │  │  ├─ items: [Object] (received items)
+│  │  │  ├─ totalReceivedValue: Number
+│  │  │  ├─ notes: String
+│  │  │  └─ metadata: Map
+│  │  ├─ Indexes: poId, status
+│  │  └─ Plugins: auditPlugin, notesPlugin, softDeletePlugin
+│  │
+│  └─ ✅ WorkCompletion
+│     ├─ Fields:
+│     │  ├─ batchId: ObjectId (ref: 'Batch', required)
+│     │  ├─ completedDate: Date (default: now)
+│     │  ├─ quantityCompleted: Number (required)
+│     │  ├─ qualityCheck: Object
+│     │  │  ├─ passed: Boolean
+│     │  │  ├─ defects: Number
+│     │  │  ├─ notes: String
+│     │  ├─ labourHours: Number
+│     │  ├─ completedBy: ObjectId (ref: 'User')
+│     │  └─ metadata: Map
+│     ├─ Indexes: batchId, completedDate
+│     └─ Plugins: auditPlugin, notesPlugin
+┌─ 💳 PAYMENT MANAGEMENT
+│  └─ 💰 Payment
+│     ├─ Fields:
+│     │  ├─ poId: ObjectId (ref: 'PurchaseOrder', required)
+│     │  ├─ amount: Number (required)
+│     │  ├─ paymentDate: Date (default: now)
+│     │  ├─ paymentMethod: String (enum: ['Cash', 'Cheque', 'BankTransfer', 'UPI'])
+│     │  ├─ referenceNumber: String
+│     │  ├─ status: String (enum: ['Pending', 'Completed', 'Failed'], default: 'Pending')
+│     │  ├─ paidBy: ObjectId (ref: 'User')
+│     │  └─ metadata: Map
+│     ├─ Indexes: poId, status
+│     └─ Plugins: auditPlugin, notesPlugin
+══════════════════════════════════════════════════════════
+📋 ENUM SUMMARY
+══════════════════════════════════════════════════════════
+🔹 COST_TYPES: ['Material', 'Labour', 'Transport', 'Product', 'Service']
+🔹 UNITS: ['piece', 'bag', 'ton', 'kg', 'cubic_meter', 'cubic_feet', 'day', 'hour', 'trip', 'km', 'sqft', 'sqmt', 'liter', 'thousand']
+🔹 ROLES: ['Admin', 'Manager', 'Procurement', 'Warehouse', 'Production', 'Transport', 'Vendor', 'Worker']
+🔹 ESTIMATE_STATUS: ['Draft', 'Approved', 'ConvertedToPO', 'Cancelled']
+🔹 PO_STATUS: ['Draft', 'Approved', 'PartiallyReceived', 'Completed', 'Cancelled']
+🔹 RECEIPT_STATUS: ['Pending', 'Inspected', 'Accepted', 'Rejected', 'Partial']
+🔹 BATCH_STATUS: ['Planned', 'InProduction', 'InKiln', 'Completed', 'QualityHold']
+🔹 KILN_TYPES: ['Small', 'Large', 'Medium']
+🔹 VEHICLE_TYPES: ['Small', 'Large', 'Medium', 'Custom']
+🔹 TRIP_STATUS: ['Scheduled', 'InTransit', 'Delivered', 'Cancelled']
+🔹 WORK_STATUS: ['NotStarted', 'InProgress', 'Completed', 'Verified']
+🔹 SALES_ORDER_STATUS: ['Draft', 'Confirmed', 'Processing', 'Ready_For_Dispatch', 'Partially_Delivered', 'Delivered', 'Invoiced', 'Cancelled']
+🔹 PAYMENT_TERMS: ['Immediate', 'Net7', 'Net15', 'Net30', 'Net45', 'Net60', 'Custom']
+🔹 CUSTOMER_TYPES: ['Individual', 'Business', 'Contractor', 'Dealer', 'Government', 'Other']
+🔹 ACCOUNT_TYPES: ['Current', 'Savings']
+🔹 EXPENSE_CATEGORIES: ['Office', 'Travel', 'Utilities', 'Maintenance', 'Marketing', 'Other']
+🔹 PAYMENT_METHODS: ['Cash', 'BankTransfer', 'Cheque', 'UPI', 'Online']
+🔹 EXPENSE_STATUS: ['Pending', 'Approved', 'Rejected', 'Paid']
+🔹 LEDGER_TRANSACTION_TYPES: ['Invoice', 'Payment', 'Credit', 'Debit', 'Adjustment']
+🔹 PAYMENT_STATUS: ['Received', 'Deposited', 'Cleared', 'Bounced']
+🔹 WAREHOUSE_TYPES: ['Main', 'Production', 'Storage', 'Sales']
+🔹 CATEGORY_TYPES: ['RawMaterial', 'FinishedGoods', 'Service', 'Labour', 'Transport', 'Mixed']
+══════════════════════════════════════════════════════════
+🔗 RELATIONSHIPS SUMMARY
+══════════════════════════════════════════════════════════
+• Category.parentId → Category._id (hierarchical)
+• Item.categoryId → Category._id
+• Item.subCategoryId → Category._id  
+• Item.tags → Tag._id (many-to-many)
+• Recipe.productId → Item._id
+• Recipe.ingredients.itemId → Item._id
+• Customer.deliveryAddresses (embedded)
+• SalesOrder.customerId → Customer._id
+• SalesOrder.items.itemId → Item._id
+• SalesInvoice.customerId → Customer._id
+• SalesInvoice.salesOrderId → SalesOrder._id
+• Vendor.supplyCategories → Category._id
+• Vendor.supplyItems → Item._id
+• Estimate.vendorId → Vendor._id
+• PurchaseOrder.vendorId → Vendor._id
+• PurchaseOrder.estimateId → Estimate._id
+• PurchaseOrder.items.itemId → Item._id
+• Batch.recipeId → Recipe._id
+• Batch.kilnId → Kiln._id
+• Trip.loadDetails.salesOrderId → SalesOrder._id
+• Trip.loadDetails.itemId → Item._id
+• OperationalExpense.approvedBy → User._id
+• CustomerLedger.customerId → Customer._id
+• CustomerLedger.createdBy → User._id
+• CustomerPayment.customerId → Customer._id
+• CustomerPayment.receivedBy → User._id
+• CustomerPayment.appliedToInvoices.invoiceId → SalesInvoice._id
+• Stock.warehouseId → Warehouse._id
+• Stock.itemId → Item._id
+• Receipt.poId → PurchaseOrder._id
+• Receipt.receivedBy → User._id
+• Receipt.inspectedBy → User._id
+• WorkCompletion.batchId → Batch._id
+• WorkCompletion.completedBy → User._id
+• Payment.poId → PurchaseOrder._id
+• Payment.paidBy → User._id
+══════════════════════════════════════════════════════════
+🛠️ PLUGINS & FEATURES
+══════════════════════════════════════════════════════════
+🔹 mongoose-paginate-v2: Pagination support
+🔹 auditPlugin: Automatic createdBy, updatedBy, timestamps
+🔹 notesPlugin: Notes/comments functionality  
+🔹 softDeletePlugin: Soft delete with deletedAt field
+🔹 customPaginate: Custom pagination logic
+🔹 Auto-generated fields: customerCode, orderNumber, invoiceNumber, etc.
+🔹 Slug generation: Automatic URL-friendly slugs
+🔹 Materialized paths: Hierarchical category paths
+🔹 Running balances: Customer credit tracking
+🔹 GST validation: Indian GST number format validation
+🔹 Email validation: Standard email format validation
+🔹 Unique constraints: Various unique fields across models
+🔹 Text indexes: Full-text search on names and descriptions
+🔹 Compound indexes: Multi-field indexes for performance
+
+This Process OF making Brick From Raw materia to procution 
+
+Step 1: कच्चा माल / मटेरियल (Raw Material)
+(Image: step1.jpeg)
+यह पेज ईंट बनाने के लिए आवश्यक कच्चे माल और उनकी लागत (Costing) के बारे में है।
+फ्लाई एश (Fly Ash):
+फ्लाई एश गाड़ि में आता है।
+अलग-अलग पार्टी से, तो उसका टन (Ton) का हिसाब रहता है।
+पैसे: जैसे कोई गाड़ि - 21 टन, 34 टन और...
+Demo (उदाहरण): 21 \times 400 = 8400/- (यानी 400 रुपये प्रति टन)।
+(600 = 12600/- भी लिखा है, शायद किसी और रेट का उदाहरण है)।
+डस्ट / बजरी (Dust):
+वो भी टन में आता है।
+हिसाब: 24 \times 250 से 300 = 7200/- (लगभग)।
+चुना (Lime):
+35 टन, 15 टन, 20 टन।
+वो भी 30 \times 7200 = 216000/- (शायद 7200 रुपये प्रति टन का रेट है)।
+हाड़नर (Hardener):
+ड्रम 230 लिटर का।
+कीमत: 10,000 या 12,000 तक।
+जिप्सम (Gypsum):
+वो भी टन में आता है।
+हिसाब: 35 \text{ टन} \times 2500 = 87500/-।
+नोट: ये सभी कच्चा माल / मटेरियल हो गया। अब यहाँ से माल बना के ईंट बनेगा।
+Step 2: लेबर और ट्रांसपोर्ट (Labor & Transport)
+(Image: step2.jpeg)
+यह पेज ईंट बनने के बाद मजदूरी और गाड़ी के भाड़े (Transport) के बारे में है।
+लेबर खर्च (Labor Cost):
+ईंट बनने के बाद उसे लेबर को पर डे (per day) देना होता है।
+1000 ईंट का लेबर रेट: 550 - 600 रुपये।
+हिसाब: अगर 1 दिन में 10,000 ईंट बनी \times 0.60 (60 पैसे/ईंट) = 6000 रुपये लेबर खर्च।
+स्टॉक और बिक्री (Stocking & Sales):
+अब ईंट बनने के बाद उनको स्टॉक करके रखते हैं।
+उसके बाद उसको बेचने के लिए, पार्टी के पास छोड़ने के लिए गाड़ि में डाल कर भेजना पड़ता है।
+तो गाड़ि का खर्च अलग देना पड़ता है।
+नोट (ट्रांसपोर्ट रेट):
+2000 ईंट एक गाड़ि में जावेगा।
+उसके किलोमीटर (KM) या गांव देख कर उसका अलग-अलग रेट तय रहता है।
+2000 ईंट का भाड़ा: 700 / 800 / 1200 / 1500 तक रहता है।
+और छोटी गाड़ि का पैसा भी रहता है KM के हिसाब से।
+Step 3: बिलिंग और मैनेजमेंट (Billing & Management)
+(Image: step3.jpeg)
+यह पेज बिक्री के बाद के हिसाब, बिल बनाने और स्टॉक मैनेजमेंट के बारे में है।
+बिक्री रेट (Sales Rate):
+उसके बाद पार्टी को 2000 ईंट का... 8500/- 9500/- 10000/- 12000/- अलग-अलग रेट वाला है (शायद क्वालिटी या दूरी के हिसाब से)।
+कागजी काम (Paperwork):
+गाड़ि के लिए चालान बनाना।
+पार्टी के लिए बिल निकालना।
+हिसाब-किताब (Accounting):
+और टोटल मेरेको दिये कितना (Payment received)।
+Month (महीने) में कितना ईंट बना।
+कितना बिका।
+और कितना अभी शेष (Stock) है।
+ईंट के प्रकार (Brick Sizes):
+मेरे पास 8", 9" और ब्लॉक में 16 \times 8 \times 6 का ईंट बनाता हूँ।
+सारांश (Summary)
+यह दस्तावेज एक ईंट भट्ठे का पूरा "Business Logic" समझाता है:
+Step 1: कच्चा माल (राख, डस्ट, चुना, केमिकल, जिप्सम) खरीदो और टन के हिसाब से पेमेंट करो।
+Step 2: मजदूर को ईंट बनाने का पैसा (550-600 रुपये प्रति हजार) दो और ईंट स्टॉक करो। फिर ऑर्डर आने पर गाड़ी से भेजो जिसका भाड़ा दूरी के हिसाब से लगेगा।
+Step 3: ग्राहक को बिल दो (चालान काटो), पेमेंट लो और महीने के अंत में स्टॉक (बना-बिका-बचा) का रजिस्टर मेंटेन करो।
+
+
+i want u to rewrite this
+seed.js that will auot feel my clinet request 
+
+/**
+ * Seed Script for Brick Manufacturing ERP
+ * 
+ * Creates initial data for:
+ * - Categories
+ * - Items (Cement, Sand, Gypsum, Bricks, Labour types)
+ * - Vendors
+ * - Warehouses
+ * - Admin user
+ * - Sample Kiln
+ * 
+ * Run: node scripts/seed.js
+ */
+
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load env from parent directory
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+// Import models
+import User from '../src/api/iam/user.model.js';
+import Category from '../src/api/catalog/category.model.js';
+import Item from '../src/api/catalog/item.model.js';
+import Vendor from '../src/api/procurement/vendor.model.js';
+import PurchaseOrder from '../src/api/procurement/po.model.js';
+import Warehouse from '../src/api/inventory/warehouse.model.js';
+import Kiln from '../src/api/manufacturing/kiln.model.js';
+import { ROLES } from '../src/config/constants.js';
+
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/erp-advance';
+
+async function connectDB() {
+    try {
+        await mongoose.connect(MONGO_URI);
+        console.log('✅ MongoDB connected for seeding');
+        console.log('📊 Connected to database:', mongoose.connection.db.databaseName);
+    } catch (err) {
+        console.error('❌ MongoDB connection error:', err.message);
+        process.exit(1);
+    }
+}
+
+async function clearData() {
+    console.log('🗑️  Clearing existing data...');
+    await User.deleteMany({});
+    await Category.deleteMany({});
+    await Item.deleteMany({});
+    await Vendor.deleteMany({});
+    await Warehouse.deleteMany({});
+    await Kiln.deleteMany({});
+    console.log('✅ Data cleared');
+}
+
+async function seedUsers() {
+    console.log('👤 Seeding users...');
+
+    const users = [
+        {
+            name: 'Admin User',
+            email: 'admin@brickerp.com',
+            password: 'Admin@123456',
+            roles: [ROLES.ADMIN],
+            active: true,
+        },
+        {
+            name: 'Procurement Manager',
+            email: 'procurement@brick-erp.com',
+            password: 'Proc@123',
+            roles: [ROLES.PROCUREMENT],
+            active: true,
+        },
+        {
+            name: 'Warehouse Manager',
+            email: 'warehouse@brick-erp.com',
+            password: 'Ware@123',
+            roles: [ROLES.WAREHOUSE],
+            active: true,
+        },
+        {
+            name: 'Production Supervisor',
+            email: 'production@brick-erp.com',
+            password: 'Prod@123',
+            roles: [ROLES.PRODUCTION],
+            active: true,
+        },
+        {
+            name: 'Logistics Manager',
+            email: 'logistics@brick-erp.com',
+            password: 'Logi@123',
+            roles: [ROLES.TRANSPORT],
+            active: true,
+        },
+    ];
+
+    const createdUsers = [];
+    for (const userData of users) {
+        // Pass plain password - the model's pre-save hook will hash it
+        const user = await User.create({
+            name: userData.name,
+            email: userData.email,
+            passwordHash: userData.password, // Will be hashed by pre-save hook
+            roles: userData.roles,
+            active: userData.active,
+        });
+        createdUsers.push(user);
+        console.log(`  ✓ Created user: ${userData.email}`);
+    }
+
+    return createdUsers[0]; // Return admin user
+}
+
+async function seedCategories(adminId) {
+    console.log('📁 Seeding categories...');
+
+    const categories = [
+        { name: 'Raw Materials', level: 0, path: 'raw-materials' },
+        { name: 'Products', level: 0, path: 'products' },
+        { name: 'Labour', level: 0, path: 'labour' },
+        { name: 'Transport', level: 0, path: 'transport' },
+        { name: 'Services', level: 0, path: 'services' },
+    ];
+
+    const createdCategories = {};
+    for (const catData of categories) {
+        const cat = await Category.create({
+            ...catData,
+            createdBy: adminId,
+        });
+        createdCategories[catData.name] = cat;
+        console.log(`  ✓ Created category: ${catData.name}`);
+    }
+
+    // Sub-categories
+    const subCategories = [
+        { name: 'Cement', parentId: createdCategories['Raw Materials']._id },
+        { name: 'Sand', parentId: createdCategories['Raw Materials']._id },
+        { name: 'Gypsum', parentId: createdCategories['Raw Materials']._id },
+        { name: 'Clay', parentId: createdCategories['Raw Materials']._id },
+        { name: 'Fuel', parentId: createdCategories['Raw Materials']._id },
+        { name: 'Bricks', parentId: createdCategories['Products']._id },
+        { name: 'Blocks', parentId: createdCategories['Products']._id },
+    ];
+
+    for (const subCat of subCategories) {
+        await Category.create({
+            ...subCat,
+            level: 1,
+            createdBy: adminId,
+        });
+        console.log(`  ✓ Created sub-category: ${subCat.name}`);
+    }
+
+    return createdCategories;
+}
+
+async function seedItems(adminId, categories) {
+    console.log('📦 Seeding items...');
+
+    const items = [
+        // Raw Materials
+        {
+            name: 'Portland Cement (OPC 43)',
+            sku: 'CEM-OPC43-50KG',
+            costType: 'Material',
+            categoryId: categories['Raw Materials']._id,
+            units: ['bag'],
+            defaultUnit: 'bag',
+            defaultUnitPrice: 35000, // ₹350 in rupees
+            description: 'OPC 43 Grade Cement - 50kg bag',
+            hsnCode: '25232900',
+            taxRate: 28,
+        },
+        {
+            name: 'River Sand (Fine)',
+            sku: 'SAND-RIVER-FINE',
+            costType: 'Material',
+            categoryId: categories['Raw Materials']._id,
+            units: ['cubic_feet', 'ton'],
+            defaultUnit: 'cubic_feet',
+            defaultUnitPrice: 5500, // ₹55 per cubic_feet
+            description: 'Fine river sand for construction',
+            hsnCode: '25051000',
+            taxRate: 5,
+        },
+        {
+            name: 'Gypsum Powder',
+            sku: 'GYP-PWD-40KG',
+            costType: 'Material',
+            categoryId: categories['Raw Materials']._id,
+            units: ['bag'],
+            defaultUnit: 'bag',
+            defaultUnitPrice: 42000, // ₹420 per bag
+            description: 'Industrial grade gypsum - 40kg bag',
+            hsnCode: '25201010',
+            taxRate: 5,
+        },
+        {
+            name: 'Clay (Red)',
+            sku: 'CLAY-RED',
+            costType: 'Material',
+            categoryId: categories['Raw Materials']._id,
+            units: ['ton', 'kg'],
+            defaultUnit: 'ton',
+            defaultUnitPrice: 150000, // ₹1500 per ton
+            description: 'Red clay for brick making',
+            hsnCode: '25070010',
+            taxRate: 5,
+        },
+        {
+            name: 'Coal (Grade B)',
+            sku: 'COAL-B',
+            costType: 'Material',
+            categoryId: categories['Raw Materials']._id,
+            units: ['ton'],
+            defaultUnit: 'ton',
+            defaultUnitPrice: 800000, // ₹8000 per ton
+            description: 'Grade B coal for kiln firing',
+            hsnCode: '27011900',
+            taxRate: 5,
+        },
+        // Products
+        {
+            name: 'Red Brick (Standard)',
+            sku: 'BRICK-RED-STD',
+            costType: 'Product',
+            categoryId: categories['Products']._id,
+            units: ['piece', 'thousand'],
+            defaultUnit: 'piece',
+            defaultUnitPrice: 800, // ₹8 per brick
+            description: 'Standard red clay brick 9x4x3 inches',
+            hsnCode: '69010010',
+            taxRate: 5,
+        },
+        {
+            name: 'Fly Ash Brick',
+            sku: 'BRICK-FLYASH',
+            costType: 'Product',
+            categoryId: categories['Products']._id,
+            units: ['piece', 'thousand'],
+            defaultUnit: 'piece',
+            defaultUnitPrice: 700, // ₹7 per brick
+            description: 'Fly ash brick 9x4x3 inches',
+            hsnCode: '68159910',
+            taxRate: 18,
+        },
+        // Labour
+        {
+            name: 'Masonry Labour',
+            sku: 'LAB-MASONRY',
+            costType: 'Labour',
+            categoryId: categories['Labour']._id,
+            units: ['day'],
+            defaultUnit: 'day',
+            defaultUnitPrice: 60000, // ₹600 per day
+            description: 'Skilled masonry labour',
+            serviceDetails: {
+                labourType: 'skilled',
+                minDays: 21,
+                maxDays: 34,
+            },
+        },
+        {
+            name: 'General Labour',
+            sku: 'LAB-GENERAL',
+            costType: 'Labour',
+            categoryId: categories['Labour']._id,
+            units: ['day'],
+            defaultUnit: 'day',
+            defaultUnitPrice: 40000, // ₹400 per day
+            description: 'Unskilled general labour',
+            serviceDetails: {
+                labourType: 'unskilled',
+                minDays: 21,
+                maxDays: 34,
+            },
+        },
+        {
+            name: 'Brick Molding Labour',
+            sku: 'LAB-BRICK-MOLD',
+            costType: 'Labour',
+            categoryId: categories['Labour']._id,
+            units: ['thousand'],
+            defaultUnit: 'thousand',
+            defaultUnitPrice: 55000, // ₹550 per 1000 bricks
+            description: 'Labour cost for molding 1000 bricks',
+            serviceDetails: {
+                labourType: 'skilled',
+                productionBased: true,
+            },
+        },
+        // Transport
+        {
+            name: 'Truck Transport (10km)',
+            sku: 'TRANS-TRUCK-10KM',
+            costType: 'Transport',
+            categoryId: categories['Transport']._id,
+            units: ['trip'],
+            defaultUnit: 'trip',
+            defaultUnitPrice: 70000, // ₹700 per trip
+            description: 'Truck transport within 10km',
+        },
+        {
+            name: 'Truck Transport (50km)',
+            sku: 'TRANS-TRUCK-50KM',
+            costType: 'Transport',
+            categoryId: categories['Transport']._id,
+            units: ['trip'],
+            defaultUnit: 'trip',
+            defaultUnitPrice: 100000, // ₹1000 per trip
+            description: 'Truck transport 10-50km',
+        },
+        {
+            name: 'Truck Transport (100km)',
+            sku: 'TRANS-TRUCK-100KM',
+            costType: 'Transport',
+            categoryId: categories['Transport']._id,
+            units: ['trip'],
+            defaultUnit: 'trip',
+            defaultUnitPrice: 150000, // ₹1500 per trip
+            description: 'Truck transport 50-100km',
+        },
+    ];
+
+    for (const itemData of items) {
+        await Item.create({
+            ...itemData,
+            createdBy: adminId,
+        });
+        console.log(`  ✓ Created item: ${itemData.name}`);
+    }
+}
+
+async function seedVendors(adminId) {
+    console.log('🏢 Seeding vendors...');
+
+    const vendors = [
+        {
+            name: 'Shree Cement Traders',
+            email: 'sales@shreecementtraders.com',
+            phone: '9876543210',
+            gstNumber: '22AABCS1234E1Z5',
+            address: {
+                street: '123 Industrial Area',
+                city: 'Jaipur',
+                state: 'Rajasthan',
+                pincode: '302001',
+            },
+            paymentTermDays: 30,
+            itemCategories: ['cement'],
+        },
+        {
+            name: 'Rajasthan Sand Suppliers',
+            email: 'info@rajsand.com',
+            phone: '9876543211',
+            gstNumber: '22AABCR1234E1Z5',
+            address: {
+                street: '456 Mining Road',
+                city: 'Jodhpur',
+                state: 'Rajasthan',
+                pincode: '342001',
+            },
+            paymentTermDays: 15,
+            itemCategories: ['sand', 'clay'],
+        },
+        {
+            name: 'Industrial Gypsum Works',
+            email: 'sales@indgypsum.com',
+            phone: '9876543212',
+            gstNumber: '22AABCI1234E1Z5',
+            address: {
+                street: '789 Factory Lane',
+                city: 'Bikaner',
+                state: 'Rajasthan',
+                pincode: '334001',
+            },
+            paymentTermDays: 45,
+            itemCategories: ['gypsum'],
+        },
+        {
+            name: 'Coal India Depot',
+            email: 'depot@coalindia.com',
+            phone: '9876543213',
+            gstNumber: '22AABCC1234E1Z5',
+            address: {
+                street: '321 Railway Siding',
+                city: 'Nagpur',
+                state: 'Maharashtra',
+                pincode: '440001',
+            },
+            paymentTermDays: 30,
+            itemCategories: ['coal', 'fuel'],
+        },
+        {
+            name: 'Fast Transport Services',
+            email: 'booking@fasttransport.com',
+            phone: '9876543214',
+            gstNumber: '22AABCF1234E1Z5',
+            address: {
+                street: '567 Transport Nagar',
+                city: 'Jaipur',
+                state: 'Rajasthan',
+                pincode: '302005',
+            },
+            paymentTermDays: 7,
+            itemCategories: ['transport'],
+        },
+    ];
+
+    for (const vendorData of vendors) {
+        await Vendor.create({
+            ...vendorData,
+            createdBy: adminId,
+        });
+        console.log(`  ✓ Created vendor: ${vendorData.name}`);
+    }
+}
+
+async function seedWarehouses(adminId) {
+    console.log('🏭 Seeding warehouses...');
+
+    const warehouses = [
+        {
+            name: 'Main Raw Material Store',
+            code: 'WH-RAW-001',
+            type: 'Raw Material',
+            address: {
+                street: '1 Factory Campus',
+                city: 'Jaipur',
+                state: 'Rajasthan',
+                pincode: '302001',
+            },
+            capacity: {
+                maxCapacity: 10000,
+                currentCapacity: 0,
+                unit: 'ton',
+            },
+            contactPerson: {
+                name: 'Ramesh Kumar',
+                phone: '9898989898',
+            },
+        },
+        {
+            name: 'Finished Goods Yard',
+            code: 'WH-FIN-001',
+            type: 'Finished Goods',
+            address: {
+                street: '2 Factory Campus',
+                city: 'Jaipur',
+                state: 'Rajasthan',
+                pincode: '302001',
+            },
+            capacity: {
+                maxCapacity: 500000,
+                currentCapacity: 0,
+                unit: 'piece',
+            },
+            contactPerson: {
+                name: 'Suresh Sharma',
+                phone: '9797979797',
+            },
+        },
+        {
+            name: 'Kiln Site Storage',
+            code: 'WH-KILN-001',
+            type: 'Kiln Site',
+            address: {
+                street: '3 Factory Campus',
+                city: 'Jaipur',
+                state: 'Rajasthan',
+                pincode: '302001',
+            },
+            capacity: {
+                maxCapacity: 200000,
+                currentCapacity: 0,
+                unit: 'piece',
+            },
+            contactPerson: {
+                name: 'Mohan Lal',
+                phone: '9696969696',
+            },
+        },
+    ];
+
+    for (const whData of warehouses) {
+        await Warehouse.create({
+            ...whData,
+            createdBy: adminId,
+        });
+        console.log(`  ✓ Created warehouse: ${whData.name}`);
+    }
+}
+
+async function seedPurchaseOrders(adminId) {
+    console.log('🧾 Seeding purchase orders (5 sample POs)...');
+
+    const procurementUser = await User.findOne({ email: 'procurement@brick-erp.com' }) || await User.findById(adminId);
+
+    // Pick some vendors and items created by earlier steps
+    const cementVendor = await Vendor.findOne({ name: /Shree Cement/i });
+    const sandVendor = await Vendor.findOne({ name: /Rajasthan Sand/i });
+    const coalVendor = await Vendor.findOne({ name: /Coal India Depot/i });
+    const gypsumVendor = await Vendor.findOne({ name: /Industrial Gypsum/i });
+    const transportVendor = await Vendor.findOne({ name: /Fast Transport Services/i });
+
+    const cement = await Item.findOne({ sku: /CEM-OPC43-50KG|CEM-OPC43/ });
+    const sand = await Item.findOne({ sku: /SAND-RIVER-FINE|SAND-RIVER/ });
+    const clay = await Item.findOne({ sku: /CLAY-RED|CLAY-RED/ });
+    const coal = await Item.findOne({ sku: /COAL-B/ });
+    const transport = await Item.findOne({ sku: /TRANS-TRUCK-10KM/ });
+
+    const wh = await Warehouse.findOne();
+
+    const poSamples = [
+        // 1) Draft PO (Cement)
+        {
+            vendorId: cementVendor._id,
+            createdBy: procurementUser._id,
+            poDate: new Date(),
+            expectedDeliveryDate: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+            status: 'Draft',
+            items: [
+                { itemId: cement._id, description: 'OPC 43 - 50kg bags', qty: 10, unit: 'bag', unitPriceLocked: 35000, receivedQty: 0 },
+            ],
+            currency: 'INR',
+            deliveryAddress: cementVendor.address || 'Factory - Raw Material Yard',
+            warehouseId: wh._id,
+            paymentTerms: 'Net30',
+            deliveryTerms: 'Ex-works',
+            internalNotes: 'Draft PO for approval - cement requirement for next month',
+        },
+
+        // 2) Approved PO (Sand)
+        {
+            vendorId: sandVendor._id,
+            createdBy: procurementUser._id,
+            poDate: new Date(Date.now() - 3 * 24 * 3600 * 1000),
+            expectedDeliveryDate: new Date(Date.now() + 4 * 24 * 3600 * 1000),
+            status: 'Approved',
+            approvedBy: procurementUser._id,
+            approvedAt: new Date(),
+            items: [
+                { itemId: sand._id, description: 'Fine river sand - bulk', qty: 50, unit: 'ton', unitPriceLocked: 5500, receivedQty: 0 },
+                { itemId: clay._id, description: 'Red clay (backup)', qty: 10, unit: 'ton', unitPriceLocked: 150000, receivedQty: 0 },
+            ],
+            currency: 'INR',
+            warehouseId: wh._id,
+            paymentTerms: 'Net15',
+            deliveryTerms: 'Delivered at place',
+            internalNotes: 'Approved - urgent for production run',
+        },
+
+        // 3) Partially received PO (Coal)
+        {
+            vendorId: coalVendor._id,
+            createdBy: procurementUser._id,
+            poDate: new Date(Date.now() - 12 * 24 * 3600 * 1000),
+            expectedDeliveryDate: new Date(Date.now() - 2 * 24 * 3600 * 1000),
+            status: 'Approved',
+            approvedBy: procurementUser._id,
+            approvedAt: new Date(Date.now() - 11 * 24 * 3600 * 1000),
+            items: [
+                { itemId: coal._id, description: 'Grade B coal', qty: 20, unit: 'ton', unitPriceLocked: 800000, receivedQty: 8 },
+            ],
+            currency: 'INR',
+            warehouseId: wh._id,
+            paymentTerms: 'Net30',
+            deliveryTerms: 'FOB',
+            internalNotes: 'Partial delivery received - balance expected next week',
+        },
+
+        // 4) Completed PO (Transport)
+        {
+            vendorId: transportVendor._id,
+            createdBy: procurementUser._id,
+            poDate: new Date(Date.now() - 20 * 24 * 3600 * 1000),
+            expectedDeliveryDate: new Date(Date.now() - 15 * 24 * 3600 * 1000),
+            status: 'Approved',
+            approvedBy: procurementUser._id,
+            approvedAt: new Date(Date.now() - 19 * 24 * 3600 * 1000),
+            items: [
+                { itemId: transport._id, description: 'Truck 10 Ton - trips', qty: 2, unit: 'trip', unitPriceLocked: 150000, receivedQty: 2 },
+            ],
+            currency: 'INR',
+            warehouseId: wh._id,
+            paymentTerms: 'Immediate',
+            deliveryTerms: 'Door delivery',
+            internalNotes: 'Transport completed and verified',
+        },
+
+        // 5) Cancelled PO (Gypsum)
+        {
+            vendorId: gypsumVendor._id,
+            createdBy: procurementUser._id,
+            poDate: new Date(Date.now() - 5 * 24 * 3600 * 1000),
+            expectedDeliveryDate: new Date(Date.now() + 5 * 24 * 3600 * 1000),
+            status: 'Cancelled',
+            items: [
+                { itemId: clay._id, description: 'Gypsum (sample)', qty: 5, unit: 'bag', unitPriceLocked: 42000, receivedQty: 0 },
+            ],
+            currency: 'INR',
+            warehouseId: wh._id,
+            paymentTerms: 'Net45',
+            deliveryTerms: 'Ex-works',
+            internalNotes: 'Order cancelled by procurement - vendor unavailable',
+        },
+    ];
+
+    for (const poData of poSamples) {
+        const po = new PurchaseOrder({
+            ...poData,
+            _auditUser: adminId,
+        });
+        await po.save();
+        console.log(`  ✓ Created PO: ${po.poNumber} (${po.status})`);
+    }
+
+    console.log('✅ Seeded 5 purchase orders');
+}
+
+async function seedKilns() {
+    console.log('🔥 Seeding kilns...');
+
+    const kilns = [
+        {
+            name: 'Kiln Alpha',
+            kilnType: 'Small',
+            location: {
+                address: 'Block A, Factory Campus',
+                city: 'Jaipur',
+            },
+            capacity: {
+                maxBricks: 50000,
+                unit: 'piece',
+            },
+            fuelType: 'Coal',
+            fuelConsumptionPerCycle: {
+                quantity: 2,
+                unit: 'ton',
+            },
+            specifications: {
+                size: {
+                    length: 100,
+                    width: 50,
+                    height: 15,
+                },
+                temperature: {
+                    max: 1200,
+                    operating: 1000,
+                },
+            },
+        },
+        {
+            name: 'Kiln Beta',
+            kilnType: 'Large',
+            location: {
+                address: 'Block B, Factory Campus',
+                city: 'Jaipur',
+            },
+            capacity: {
+                maxBricks: 200000,
+                unit: 'piece',
+            },
+            fuelType: 'Coal',
+            fuelConsumptionPerCycle: {
+                quantity: 8,
+                unit: 'ton',
+            },
+            specifications: {
+                size: {
+                    length: 200,
+                    width: 100,
+                    height: 20,
+                },
+                temperature: {
+                    max: 1200,
+                    operating: 1050,
+                },
+            },
+        },
+    ];
+
+    for (const kilnData of kilns) {
+        await Kiln.create(kilnData);
+        console.log(`  ✓ Created kiln: ${kilnData.name}`);
+    }
+}
+
+async function runSeeder() {
+    await connectDB();
+
+    const clearExisting = process.argv.includes('--clear');
+
+    // Check if data already exists
+    const existingUsers = await User.countDocuments();
+    const existingItems = await Item.countDocuments();
+
+    if (existingUsers > 0 && !clearExisting) {
+        console.log('\n⚠️  Database already contains data!');
+        console.log(`   Found ${existingUsers} users and ${existingItems} items.`);
+        console.log('   Use --clear flag to clear existing data before seeding.');
+        console.log('   Example: node scripts/seed.js --clear\n');
+        await mongoose.disconnect();
+        process.exit(0);
+    }
+
+    if (clearExisting) {
+        await clearData();
+    }
+
+    console.log('\n🌱 Starting seed process...\n');
+
+    try {
+        const adminUser = await seedUsers();
+        const categories = await seedCategories(adminUser._id);
+        await seedItems(adminUser._id, categories);
+        await seedVendors(adminUser._id);
+        await seedWarehouses(adminUser._id);
+        await seedPurchaseOrders(adminUser._id);
+        await seedKilns();
+
+        console.log('\n✅ Seeding completed successfully!\n');
+        console.log('📋 Admin Credentials:');
+        console.log('   Email: admin@brickerp.com');
+        console.log('   Password: Admin@123456\n');
+
+    } catch (error) {
+        console.error('❌ Seeding failed:', error);
+    } finally {
+        await mongoose.disconnect();
+        console.log('🔌 Database disconnected');
+        process.exit(0);
+    }
+}
+
+runSeeder();
+
