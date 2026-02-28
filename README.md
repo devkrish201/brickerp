@@ -1075,6 +1075,10 @@ Authorization: Bearer YOUR_TOKEN
 ```
 ?page=1&limit=20&status=kiln
 ```
+You may also filter by labour:
+* `labourItemId` – id of the labour item assigned to the batch
+* `labourStatus` – `Paid` or `Unpaid`
+* `fromDate` / `toDate` – restrict by batch `startDate` range (will also match when `startDate` is missing by using the batch `createdAt` timestamp)
 
 **Status Values:** draft, production, kiln, completed, archived
 
@@ -1118,10 +1122,28 @@ Authorization: Bearer YOUR_TOKEN
 **Request Body:**
 ```json
 {
-  "quantity": 50000,
-  "brickType": "Red Brick (9x4.5x3)",
-  "notes": "First batch of Q1"
+  "itemId": "<product item id>",
+  "plannedQty": 50000,
+  "unit": "pieces",
+  "status": "Draft",
+  "scheduledStartDate": "2026-03-01",
+  "rawMaterials": [
+    { "itemId": "<raw material item>", "quantity": 100, "unit": "kg", "unitCost": 50 }
+  ],
+  "notes": "Batch with labour and material details"
 }
+```
+
+---
+
+## Bulk Labour Payment Helper
+
+**Endpoint:** `PATCH /api/v1/manufacturing/batches/mark-paid`  
+**Access:** Authenticated (Production Team)
+
+Marks the specified batch IDs as having their labour paid. Example body:
+```json
+{ "ids": ["batchId1","batchId2"] }
 ```
 
 ---
@@ -1149,8 +1171,42 @@ Authorization: Bearer YOUR_TOKEN
 
 ## Complete Batch
 
-**Endpoint:** `POST /api/v1/manufacturing/batches/:id/complete`  
+**Endpoint:** `PATCH /api/v1/manufacturing/batches/:id/complete`  
 **Access:** Authenticated (Production Team)
+
+*Legacy clients may still `POST` to `/api/v1/manufacturing/brick-batches/:id/complete` but PATCH is preferred.*
+
+---
+
+## Delete Batch
+
+**Endpoint:** `DELETE /api/v1/manufacturing/batches/:id`  
+**Access:** Authenticated (Production Team)  
+*Performs a soft delete; the record is hidden but retained for audit.*
+
+---
+
+## Cancel Batch
+
+**Endpoint:** `PATCH /api/v1/manufacturing/batches/:id/cancel`  
+**Access:** Authenticated (Production Team)  
+**Request Body (optional):**
+```json
+{ "reason": "User supplied cancellation reason" }
+```
+
+*Convenience alias for delete that also allows specifying a reason and reverts any stock movements.*
+
+---
+
+## Quality Check
+
+**Endpoint:** `PATCH /api/v1/manufacturing/batches/:id/quality-check`  
+**Access:** Authenticated (Production Team)
+**Request Body:**
+```json
+{ "grade": "A", "passRate": 98, "remarks": "Routine inspection" }
+```
 
 ---
 

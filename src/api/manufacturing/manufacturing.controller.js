@@ -18,11 +18,26 @@ import { calculateBrickLabourCost, calculateKilnProductionTime } from '../../bus
 // ============================================
 
 export const getBrickBatches = asyncHandler(async (req, res) => {
-    const { status, itemId, search } = req.query;
+    const { status, itemId, search, labourItemId, fromDate, toDate, labourStatus } = req.query;
     const filter = {};
 
     if (status) filter.status = status;
     if (itemId) filter.itemId = itemId;
+    if (labourItemId) filter.labourItemId = labourItemId;
+    if (labourStatus) filter.labourStatus = labourStatus;
+
+    // date filtering: filter batches by startDate range
+    if (fromDate || toDate) {
+        const startCond = {};
+        if (fromDate) {
+            startCond.$gte = new Date(fromDate + 'T00:00:00.000Z');
+        }
+        if (toDate) {
+            startCond.$lte = new Date(toDate + 'T23:59:59.999Z');
+        }
+        filter.startDate = startCond;
+    }
+
     if (search) {
         filter.batchCode = { $regex: search, $options: 'i' };
     }
@@ -31,6 +46,8 @@ export const getBrickBatches = asyncHandler(async (req, res) => {
         sort: { createdAt: -1 },
         populate: [
             { path: 'itemId', select: 'name sku' },
+            // bring back labour item specs so we can show the labour's actual name
+            { path: 'labourItemId', select: 'name sku specifications' },
             { path: 'createdBy', select: 'name' },
         ],
     });
@@ -46,17 +63,27 @@ export const getActiveBatches = asyncHandler(async (req, res) => {
 export const getBrickBatch = asyncHandler(async (req, res) => {
     const batch = await BrickBatch.findById(req.params.id)
         .populate('itemId', 'name sku specifications')
+        .populate('labourItemId', 'name sku')
         .populate('kilnId', 'name code kilnType capacity')
         .populate('createdBy', 'name email')
         .populate('rawMaterials.itemId', 'name sku')
-        .populate('labourEntries.workerId', 'name')
         .populate('transportTripId');
 
     if (!batch) {
         throw new ApiError(404, 'Brick Batch not found');
     }
 
-    res.json({ success: true, data: batch });
+    // convert to plain object so we can attach derived props
+    const result = batch.toObject({ virtuals: true });
+    result.qualityCheck = {
+        grade: result.qualityGrade,
+        passRate: result.metadata?.qualityPassRate,
+        remarks: result.qualityNotes,
+        checkedBy: result.qualityCheckedBy,
+        date: result.qualityCheckDate,
+    };
+
+    res.json({ success: true, data: result });
 });
 
 // Update batch
@@ -64,6 +91,28 @@ export const updateBrickBatch = asyncHandler(async (req, res) => {
     const data = { ...req.body, updatedBy: req.user?._id };
     // ignore any client-sent stockAdded flag
     delete data.stockAdded;
+    // remove labourItemName because model will compute it
+    delete data.labourItemName;
+    // normalize notes if necessary
+    if (typeof data.notes === 'string') {
+        try {
+            data.notes = JSON.parse(data.notes);
+        } catch (e) {
+            data.notes = [];
+        }
+    }
+    // map scheduledStartDate → startDate if frontend sends it
+    if (data.scheduledStartDate && !data.startDate) {
+        data.startDate = data.scheduledStartDate;
+    }
+    delete data.scheduledStartDate;
+
+    // if updating to completed and producedQty isn't supplied, set it from plannedQty
+    if (data.status === BATCH_STATUS.COMPLETED && (data.producedQty === undefined || data.producedQty === 0)) {
+        if (data.plannedQty) {
+            data.producedQty = data.plannedQty;
+        }
+    }
 
     // fetch existing batch to compare status before update
     const existing = await BrickBatch.findById(req.params.id);
@@ -84,41 +133,33 @@ export const updateBrickBatch = asyncHandler(async (req, res) => {
             (batch.qualityPassedQty && batch.qualityPassedQty > 0)
                 ? batch.qualityPassedQty
                 : (batch.producedQty || batch.plannedQty || 0);
-
-        const existingStock = await Stock.findOne({ itemId: batch.itemId, batch: batch.batchCode });
-        if (!existingStock) {
-            if (desiredQty > 0) {
-                await Stock.updateQuantity(
-                    batch.itemId,
-                    desiredQty,
-                    {
-                        unit: 'piece',
-                        batch: batch.batchCode,
-                    }
-                );
-            }
-        } else {
-            // if record exists but quantity is lower than desired, top it up
-            if (desiredQty > existingStock.quantity) {
-                const diff = desiredQty - existingStock.quantity;
-                await Stock.updateQuantity(
-                    batch.itemId,
-                    diff,
-                    {
-                        unit: 'piece',
-                        batch: batch.batchCode,
-                    }
-                );
+        if (desiredQty > 0) {
+            try {
+                const Stock = mongoose.model('Stock');
+                const existingStock = await Stock.findOne({ itemId: batch.itemId, batch: batch.batchCode });
+                if (!existingStock) {
+                    await Stock.updateQuantity(
+                        batch.itemId,
+                        desiredQty,
+                        { unit: 'piece', batch: batch.batchCode }
+                    );
+                } else if (desiredQty > existingStock.quantity) {
+                    const diff = desiredQty - existingStock.quantity;
+                    await Stock.updateQuantity(
+                        batch.itemId,
+                        diff,
+                        { unit: 'piece', batch: batch.batchCode }
+                    );
+                }
+            } catch (err) {
+                // log but don't block
+                console.error('Stock update failed during batch update', err.message || err);
             }
         }
-
-        // always mark flag true once status is completed
-        if (!batch.stockAdded) {
-            batch.stockAdded = true;
-            await batch.save();
-        }
+        batch.stockAdded = true;
     }
 
+    await batch.save();
     res.json({ success: true, message: 'Brick Batch updated successfully', data: batch });
 });
 
@@ -128,25 +169,66 @@ export const createBrickBatch = asyncHandler(async (req, res) => {
         plannedQty,
         brickSize,
         rawMaterials,
+        labourItemId,
+        labourItemName,
+        labourStatus,
+        labourPaymentType,
+        labourQuantity,
+        labourRate,
         startDate,
+        scheduledStartDate,
+        endDate,
+        plannedEndDate,
+        unit,
+        notes,
         status,
         producedQty,
         qualityPassedQty,
     } = req.body;
+    // ensure notes is array/object not string
+    let normalizedNotes = notes;
+    if (typeof notes === 'string') {
+        if (notes.trim() === '') {
+            normalizedNotes = [];
+        } else {
+            try {
+                normalizedNotes = JSON.parse(notes);
+            } catch (e) {
+                normalizedNotes = [];
+            }
+        }
+    }
 
+    // scheduledStartDate is the frontend field name; map it to startDate
+    const resolvedStartDate = startDate || scheduledStartDate || undefined;
 
+    // ignore any labourItemName supplied by client; pre-save hook will resolve from item
     const batch = new BrickBatch({
         itemId,
         plannedQty,
+        unit: unit || 'piece',
         brickSize: brickSize || { type: 'standard' },
         rawMaterials: rawMaterials || [],
-        startDate,
+        labourItemId,
+        labourStatus,
+        labourPaymentType,
+        labourQuantity,
+        labourRate,
+        startDate: resolvedStartDate,
+        endDate,
+        plannedEndDate,
+        notes: normalizedNotes,
         status: status || BATCH_STATUS.DRAFT,
         producedQty: producedQty || 0,
         qualityPassedQty: qualityPassedQty || 0,
         createdBy: req.user._id,
         _auditUser: req.user._id,
     });
+
+    // if the batch is already completed but producedQty wasn't given, default it
+    if (batch.status === BATCH_STATUS.COMPLETED && (!batch.producedQty || batch.producedQty === 0)) {
+        batch.producedQty = batch.plannedQty || 0;
+    }
 
     await batch.save();
 
@@ -234,6 +316,7 @@ export const moveBatchToKiln = asyncHandler(async (req, res) => {
 });
 
 export const completeBatch = asyncHandler(async (req, res) => {
+    // note: route now supports PATCH to align with frontend service (was previously POST to /brick-batches)
     const { producedQty, qualityPassedQty, rejectedQty, qualityGrade, qualityNotes } = req.body;
 
     const batch = await BrickBatch.findById(req.params.id);
@@ -274,20 +357,86 @@ export const completeBatch = asyncHandler(async (req, res) => {
     });
 });
 
-export const addLabourEntry = asyncHandler(async (req, res) => {
+// hard/soft delete a batch (standard DELETE endpoint)
+export const deleteBatch = asyncHandler(async (req, res) => {
+    const batch = await BrickBatch.findById(req.params.id);
+    if (!batch) {
+        throw new ApiError(404, 'Brick Batch not found');
+    }
+    if (typeof batch.softDelete === 'function') {
+        await batch.softDelete(req.user?._id || null);
+    } else {
+        await batch.remove();
+    }
+    res.json({ success: true, message: 'Batch deleted successfully' });
+});
+
+// cancel/soft-delete a batch (used by frontend "delete" action)
+export const cancelBatch = asyncHandler(async (req, res) => {
+    const { reason } = req.body;
     const batch = await BrickBatch.findById(req.params.id);
     if (!batch) {
         throw new ApiError(404, 'Brick Batch not found');
     }
 
-    await batch.addLabourEntry(req.body);
+    // revert any raw material stock deductions that were done
+    if (batch.rawMaterials && batch.rawMaterials.length) {
+        for (const material of batch.rawMaterials) {
+            if (material.stockDeducted) {
+                await Stock.updateQuantity(material.itemId, material.quantity);
+                material.stockDeducted = false;
+            }
+        }
+    }
 
-    res.json({
-        success: true,
-        message: 'Labour entry added',
-        data: batch.labourEntries,
-    });
+    // if finished goods were added to inventory, remove them
+    if (batch.stockAdded) {
+        const qty = batch.qualityPassedQty > 0 ? batch.qualityPassedQty : (batch.producedQty || batch.plannedQty || 0);
+        if (qty > 0) {
+            await Stock.updateQuantity(batch.itemId, -qty, { unit: batch.unit || 'piece', batch: batch.batchCode });
+        }
+    }
+
+    // store cancel reason in metadata so it can be audited later
+    if (reason) {
+        if (!batch.metadata) batch.metadata = {};
+        batch.metadata.cancelReason = reason;
+    }
+
+    // perform soft delete if plugin available
+    if (typeof batch.softDelete === 'function') {
+        await batch.softDelete(req.user?._id || null);
+    } else {
+        await batch.remove();
+    }
+
+    res.json({ success: true, message: 'Batch cancelled successfully' });
 });
+
+// quality check endpoint separate from completion
+export const qualityCheckBatch = asyncHandler(async (req, res) => {
+    const { grade, passRate, remarks } = req.body;
+    const batch = await BrickBatch.findById(req.params.id);
+    if (!batch) {
+        throw new ApiError(404, 'Brick Batch not found');
+    }
+
+    if (grade) batch.qualityGrade = grade;
+    if (typeof passRate !== 'undefined') {
+        // no explicit field for passRate, store under metadata
+        batch.metadata = batch.metadata || {};
+        batch.metadata.qualityPassRate = passRate;
+    }
+    if (remarks) batch.qualityNotes = remarks;
+
+    batch.qualityCheckedBy = req.user._id;
+    batch.qualityCheckDate = new Date();
+
+    await batch.save();
+    res.json({ success: true, message: 'Quality check recorded', data: batch });
+});
+
+
 
 export const addRawMaterial = asyncHandler(async (req, res) => {
     const batch = await BrickBatch.findById(req.params.id);
@@ -303,6 +452,24 @@ export const addRawMaterial = asyncHandler(async (req, res) => {
         message: 'Raw material added',
         data: batch.rawMaterials,
     });
+});
+
+// ============================================
+// BULK OPERATIONS
+// ============================================
+
+export const markBatchesPaid = asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+        throw new ApiError(400, 'No batch IDs provided');
+    }
+
+    const result = await BrickBatch.updateMany(
+        { _id: { $in: ids } },
+        { $set: { labourStatus: 'Paid' } }
+    );
+
+    res.json({ success: true, message: 'Batches marked paid', modifiedCount: result.nModified || result.modifiedCount });
 });
 
 // ============================================
@@ -383,7 +550,9 @@ export default {
     startBatchProduction,
     moveBatchToKiln,
     completeBatch,
-    addLabourEntry,
+    cancelBatch,
+    deleteBatch,
+    qualityCheckBatch,
     addRawMaterial,
     // Calculations
     calculateLabourCostPreview,

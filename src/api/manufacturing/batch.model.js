@@ -132,15 +132,33 @@ const brickBatchSchema = new mongoose.Schema({
     // Raw materials used
     rawMaterials: [rawMaterialUsageSchema],
 
-    // Labour entries
-    labourEntries: [labourEntrySchema],
-
-    // Labour cost summary (from client calculations)
-    labourCostSummary: {
-        totalDays: Number,
-        avgRatePerDay: Number, // In rupees
-        totalCost: Number, // In rupees
-        costPer1000: Number, // In rupees
+    // Single labour assignment (each batch may have at most one labour item)
+    labourItemId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Item',
+    },
+    labourItemName: String,
+    labourStatus: {
+        type: String,
+        enum: ['Paid', 'Unpaid'],
+        default: 'Unpaid',
+    },
+    labourPaymentType: {
+        type: String,
+        enum: ['PerDay', 'PerBrick'],
+        default: 'PerDay',
+    },
+    labourQuantity: {
+        type: Number, // hours or bricks
+        default: 0,
+    },
+    labourRate: {
+        type: Number, // per day or per brick cost
+        default: 0,
+    },
+    labourTotalCost: {
+        type: Number, // computed
+        default: 0,
     },
 
     // Dates
@@ -267,24 +285,37 @@ brickBatchSchema.pre('validate', async function (next) {
 // pre-save retains calculations but no longer generates batchCode
 brickBatchSchema.pre('save', async function (next) {
 
+    // ensure labourItemName reflects the linked item (prefer labourName from specs)
+    if (this.labourItemId) {
+        try {
+            const Item = mongoose.model('Item');
+            const itm = await Item.findById(this.labourItemId)
+                .select('name specifications')
+                .lean();
+            if (itm) {
+                // prefer labourName field stored under specifications
+                this.labourItemName =
+                    (itm.specifications && itm.specifications.labourName) ||
+                    itm.name ||
+                    this.labourItemName;
+            }
+        } catch (err) {
+            // ignore lookup failures
+        }
+    }
+
     // Calculate material costs
     this.totalMaterialCost = this.rawMaterials.reduce((sum, m) => sum + (m.totalCost || 0), 0);
 
     // Calculate labour costs
-    this.totalLabourCost = this.labourEntries.reduce((sum, l) => sum + (l.totalCost || 0), 0);
-
-    // Labour cost summary
-    if (this.labourEntries.length > 0) {
-        const totalDays = this.labourEntries.reduce((sum, l) => sum + l.daysWorked, 0);
-        this.labourCostSummary = {
-            totalDays,
-            avgRatePerDay: Math.round(this.totalLabourCost / totalDays),
-            totalCost: this.totalLabourCost,
-            costPer1000: this.producedQty > 0
-                ? Math.round((this.totalLabourCost / this.producedQty) * 1000)
-                : null,
-        };
+    // labour cost computed from individual fields
+    if (this.labourQuantity && this.labourRate) {
+        this.labourTotalCost = Math.round((this.labourQuantity || 0) * (this.labourRate || 0));
     }
+    this.totalLabourCost = this.labourTotalCost || 0;
+
+    // clear deprecated summaries
+    this.labourCostSummary = undefined;
 
     // Total cost
     this.totalCost = this.totalMaterialCost + this.totalLabourCost;
@@ -331,25 +362,37 @@ brickBatchSchema.methods.complete = async function (producedQty, qualityPassedQt
     this.qualityPassedQty = qualityPassedQty;
     this.rejectedQty = rejectedQty;
 
+    // when a batch is completed we should post finished goods to stock if not already done
+    if (!this.stockAdded) {
+        const desiredQty = (qualityPassedQty && qualityPassedQty > 0)
+            ? qualityPassedQty
+            : (producedQty || this.plannedQty || 0);
+        if (desiredQty > 0) {
+            try {
+                const Stock = mongoose.model('Stock');
+                await Stock.updateQuantity(
+                    this.itemId,
+                    desiredQty,
+                    {
+                        unit: this.unit || 'piece',
+                        batch: this.batchCode,
+                    }
+                );
+            } catch (err) {
+                // log but don't block completion
+                console.error('Failed to add stock for completed batch', err.message || err);
+            }
+        }
+        this.stockAdded = true;
+    }
+
     await this.save();
     return this;
 };
 
-// Instance method to add labour entry
-brickBatchSchema.methods.addLabourEntry = async function (entryData) {
-    const labourCalc = calculateBrickLabourCost(
-        this.producedQty || this.plannedQty,
-        entryData.ratePerDay ? entryData.ratePerDay * 1000 / 500 : 55000 // Convert to per 1000
-    );
-
-    this.labourEntries.push({
-        ...entryData,
-        totalCost: Math.round((entryData.ratePerDay || 40000) * (entryData.daysWorked || 1)),
-    });
-
-    await this.save();
-    return this;
-};
+// NOTE: labourEntries array is deprecated in favor of single labour fields above.
+// The previous addLabourEntry method has been removed because batches now
+// store only one labour reference and cost directly.
 
 // Static method to get active batches
 brickBatchSchema.statics.getActive = function () {

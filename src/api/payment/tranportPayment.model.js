@@ -70,12 +70,13 @@ const transportPaymentSchema = new mongoose.Schema({
     },
     paymentMethod: {
         type: String,
-        enum: ['CASH', 'CHEQUE', 'BANK_TRANSFER', 'NEFT', 'UPI', 'OTHER'],
+        enum: ['CASH', 'BANK_TRANSFER', 'UPI'],
         required: [true, 'Payment method is required'],
     },
     paymentStatus: {
         type: String,
-        enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'REFUNDED'],
+        enum: ['PENDING', 'COMPLETED', 'CANCELLED'],
+
         default: 'PENDING',
         index: true,
     },

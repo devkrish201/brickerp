@@ -322,6 +322,49 @@ export const getPurchaseOrders = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Get PO totals for a vendor
+ */
+export const getPOTotalsByVendor = asyncHandler(async (req, res) => {
+    try {
+        const { vendorId } = req.params;
+        if (!vendorId) {
+            return res.status(400).json({ success: false, message: 'vendorId required' });
+        }
+        if (!mongoose.isValidObjectId(vendorId)) {
+            return res.status(400).json({ success: false, message: 'Invalid vendorId' });
+        }
+
+        const objId = new mongoose.Types.ObjectId(vendorId);
+        let data;
+        try {
+            const agg = await PurchaseOrder.aggregate([
+                { $match: { vendorId: objId, isDeleted: { $ne: true } } },
+                { $group: {
+                    _id: null,
+                    totalAmount: { $sum: '$netAmount' },
+                    totalPending: { $sum: '$pendingValue' }
+                }}
+            ]);
+            data = agg[0] || { totalAmount: 0, totalPending: 0 };
+        } catch (aggErr) {
+            console.error('aggregation failed in getPOTotalsByVendor', aggErr);
+            const orders = await PurchaseOrder.find({ vendorId: objId, isDeleted: { $ne: true } })
+                .select('netAmount pendingValue')
+                .lean();
+            data = orders.reduce((acc, o) => {
+                acc.totalAmount += o.netAmount || 0;
+                acc.totalPending += o.pendingValue || 0;
+                return acc;
+            }, { totalAmount: 0, totalPending: 0 });
+        }
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('getPOTotalsByVendor failed', error);
+        next(error);
+    }
+});
+
+/**
  * Get single PO
  */
 export const getPurchaseOrder = asyncHandler(async (req, res) => {

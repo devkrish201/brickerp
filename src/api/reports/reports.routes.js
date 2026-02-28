@@ -1,5 +1,6 @@
 import express from 'express';
 import {
+    getDashboardKPIs,
     getDashboardOverview,
     getStockLevelsReport,
     // getStockMovementReport, // Disabled - GoodsReceipt model not available
@@ -58,6 +59,9 @@ router.use(authenticate);
 
  *         description: Dashboard data retrieved successfully
  */
+// Single-call KPI endpoint for the ERP dashboard
+router.get('/dashboard-kpis', authorize(...ROLE_GROUPS.INTERNAL_STAFF), getDashboardKPIs);
+
 router.get('/dashboard', authorize(...ROLE_GROUPS.INTERNAL_STAFF), getDashboardOverview);
 
 // ============================================

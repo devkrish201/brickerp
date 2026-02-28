@@ -39,12 +39,12 @@ const salesPaymentSchema = new mongoose.Schema({
     },
     paymentMethod: {
         type: String,
-        enum: ['CASH', 'CHEQUE', 'NEFT', 'RTGS', 'UPI', 'IMPS', 'BANK_TRANSFER', 'CREDIT_CARD', 'DEBIT_CARD', 'OTHER'],
+        enum: ['CASH', 'UPI', 'BANK_TRANSFER'],
         required: [true, 'Payment method is required'],
     },
     paymentStatus: {
         type: String,
-        enum: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'REFUNDED'],
+        enum: ['PENDING', 'COMPLETED', 'CANCELLED'],
         default: 'PENDING',
         index: true,
     },

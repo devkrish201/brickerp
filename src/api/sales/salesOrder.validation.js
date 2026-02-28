@@ -24,7 +24,7 @@ const lineItemSchema = Joi.object({
 
 // Transport details sub-schema
 const transportSchema = Joi.object({
-    // vehicleType: Joi.string().valid('Tractor', 'Mini_Truck', 'Truck', 'Majda', 'Tempo').optional(),
+    transportItemId: Joi.string().hex().length(24).optional(),
     vehicleNumber: Joi.string().max(20).allow('').optional(),
     driverName: Joi.string().max(100).allow('').optional(),
     driverPhone: Joi.string().pattern(/^[6-9]\d{9}$/).allow('').optional(),
@@ -36,6 +36,7 @@ const transportSchema = Joi.object({
     // Server-calculated or flat-rate / manual override
     calculatedCost: Joi.number().min(0).optional(),
     transportCost: Joi.number().min(0).optional(),
+    paidStatus: Joi.string().valid('Unpaid', 'Paid').default('Unpaid'),
     notes: Joi.string().max(500).allow('').optional(),
 });
 
@@ -131,6 +132,9 @@ export const listOrdersSchema = Joi.object({
     search: Joi.string().max(200).optional(),
     customerId: Joi.string().hex().length(24).optional(),
     status: Joi.string().valid('Draft', 'Confirmed', 'Processing', 'Ready', 'Ready_For_Dispatch', 'Dispatched', 'Partially_Delivered', 'Delivered', 'Invoiced', 'Cancelled').optional(),
+    transportItemId: Joi.string().hex().length(24).optional(),
+    transportPaidStatus: Joi.string().valid('Unpaid', 'Paid').optional(),
+    driverName: Joi.string().max(100).optional(),
     fromDate: Joi.date().optional(),
     toDate: Joi.date().optional(),
     sortBy: Joi.string().valid('orderNumber', 'orderDate', 'grandTotal', 'createdAt').default('createdAt'),

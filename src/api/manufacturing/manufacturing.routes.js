@@ -16,8 +16,11 @@ import {
     startBatchProduction,
     moveBatchToKiln,
     completeBatch,
-    addLabourEntry,
+    cancelBatch,
+    deleteBatch,
+    qualityCheckBatch,
     addRawMaterial,
+    markBatchesPaid,
     // Calculations
     calculateLabourCostPreview,
     calculateProductionTimePreview,
@@ -187,32 +190,47 @@ router.put('/batches/:id', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), updateBric
  *         application/json:
 
  *           schema:
-
-
  *             type: object
-
-
- *             required: [quantity, brickType]
-
-
  *             properties:
-
-
- *               quantity:
-
-
- *                 type: number
-
-
- *               brickType:
-
-
+ *               itemId:
  *                 type: string
-
-
+ *               plannedQty:
+ *                 type: number
+ *               unit:
+ *                 type: string
+ *               status:
+ *                 type: string
+ *               scheduledStartDate:
+ *                 type: string
+ *                 format: date
+ *               rawMaterials:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     itemId:
+ *                       type: string
+ *                     quantity:
+ *                       type: number
+ *                     unit:
+ *                       type: string
+ *                     unitCost:
+ *                       type: number
+ *               labourItemId:
+ *                 type: string
+ *               labourItemName:
+ *                 type: string
+ *               labourStatus:
+ *                 type: string
+ *               labourPaymentType:
+ *                 type: string
+ *               labourQuantity:
+ *                 type: number
+ *               labourRate:
+ *                 type: number
+ *               ratePerDay:
+ *                 type: number
  *               notes:
-
-
  *                 type: string
 
  *     responses:
@@ -224,6 +242,34 @@ router.put('/batches/:id', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), updateBric
 router.post('/batches', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), brickBatchValidation, createBrickBatch);
 
 // Batch workflow
+
+/**
+ * @swagger
+ * /manufacturing/batches/mark-paid:
+ *   patch:
+ *     summary: Mark multiple batches as paid for labour
+ *     description: Bulk update of batches setting labourStatus to Paid
+ *     tags: [Manufacturing]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ids]
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       200:
+ *         description: Batches marked paid
+ */
+router.patch('/batches/mark-paid', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), markBatchesPaid);
+
 /**
 
  * @swagger
@@ -335,7 +381,7 @@ router.post('/batches/:id/move-to-kiln', authorize(...ROLE_GROUPS.PRODUCTION_TEA
 
  * @swagger
 
- * /manufacturing/brick-batches/{id}/complete:
+ * /manufacturing/batches/{id}/complete:
 
  *   post:
 
@@ -371,7 +417,93 @@ router.post('/batches/:id/move-to-kiln', authorize(...ROLE_GROUPS.PRODUCTION_TEA
 
  *         description: Batch not found
  */
+// the original path used incorrect prefix and POST method. the frontend now issues a PATCH to /batches/:id/complete
+router.patch('/batches/:id/complete', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), completeBatch);
+// legacy support (optional) - keep old path but respond as well
 router.post('/brick-batches/:id/complete', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), completeBatch);
+
+// Batch delete/cancel
+/**
+ * @swagger
+ * /manufacturing/batches/{id}:
+ *   delete:
+ *     summary: Delete a brick batch (soft delete)
+ *     tags: [Manufacturing]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Batch deleted successfully
+ */
+router.delete('/batches/:id', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), deleteBatch);
+
+/**
+ * @swagger
+ * /manufacturing/batches/{id}/cancel:
+ *   patch:
+ *     summary: Cancel a brick batch
+ *     description: Soft-delete the batch and optionally revert stock
+ *     tags: [Manufacturing]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Batch cancelled successfully
+ */
+router.patch('/batches/:id/cancel', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), cancelBatch);
+
+/**
+ * @swagger
+ * /manufacturing/batches/{id}/quality-check:
+ *   patch:
+ *     summary: Record a quality check result for a batch
+ *     tags: [Manufacturing]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               grade:
+ *                 type: string
+ *               passRate:
+ *                 type: number
+ *               remarks:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Quality check recorded
+ */
+router.patch('/batches/:id/quality-check', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), qualityCheckBatch);
 
 // Batch details
 /**
@@ -447,7 +579,6 @@ router.post('/brick-batches/:id/complete', authorize(...ROLE_GROUPS.PRODUCTION_T
 
  *         description: Labour entry created successfully
  */
-router.post('/batches/:id/labour', authorize(...ROLE_GROUPS.PRODUCTION_TEAM), addLabourEntry);
 /**
 
  * @swagger

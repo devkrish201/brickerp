@@ -8,73 +8,64 @@ import { auditPlugin, notesPlugin } from '../../utils/auditPlugin.js';
  * Tracks current inventory levels per item per warehouse
  */
 const stockSchema = new mongoose.Schema({
+    // optional category helper for faster filtering
+    categoryId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Category',
+        index: true,
+    },
+
+    // reference to the inventory item (brick, raw material, etc.)
     itemId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Item',
         required: [true, 'Item is required'],
         index: true,
     },
+
+    // actual quantities and costing fields
     quantity: {
         type: Number,
-        required: true,
         default: 0,
-        min: [0, 'Quantity cannot be negative'],
     },
-    reservedQuantity: {
+    reservedQty: {
         type: Number,
         default: 0,
-        min: 0,
     },
-    availableQuantity: {
-        type: Number, // quantity - reservedQuantity (auto-calculated)
+    availableQty: {
+        type: Number,
+        default: 0,
     },
     unit: {
         type: String,
         enum: Object.values(UNITS),
-        required: true,
+        default: 'piece',
     },
-    // Batch/Lot tracking
-    batch: {
-        type: String,
-        trim: true,
-    },
-    lotNumber: String,
-    expiryDate: Date,
-    manufacturingDate: Date,
-
-    // Cost tracking (for FIFO/LIFO/Weighted Average)
     unitCost: {
-        type: Number, // In rupees
+        type: Number,
         default: 0,
     },
-    totalValue: {
-        type: Number, // quantity × unitCost
-    },
-
-    // Movement tracking
-    lastInDate: Date,
-    lastOutDate: Date,
-    lastStockCheck: Date,
-
-    // Location within warehouse
-    location: {
-        zone: String,
-        rack: String,
-        shelf: String,
-        bin: String,
-    },
-
-    // Status
-    status: {
-        type: String,
-        enum: ['Available', 'Reserved', 'OnHold', 'Damaged', 'Expired'],
-        default: 'Available',
-    },
-
-    // Reorder alerts
     reorderLevel: {
         type: Number,
         default: 0,
+    },
+    batch: String,
+    expiryDate: Date,
+    warehouseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Warehouse',
+        index: true,
+    },
+
+    manufacturingDate: Date,
+
+    totalValue: {
+        type: Number,
+    },
+
+    // Status (Available, Consumed, etc.)
+    status: {
+        type: String,
     },
     reorderQuantity: {
         type: Number,
@@ -92,6 +83,7 @@ const stockSchema = new mongoose.Schema({
 
 // Compound indexes
 stockSchema.index({ itemId: 1, batch: 1 });
+stockSchema.index({ categoryId: 1 });
 stockSchema.index({ isLowStock: 1 });
 stockSchema.index({ expiryDate: 1 });
 
@@ -109,15 +101,28 @@ stockSchema.virtual('item', {
 });
 
 // Pre-save calculations
-stockSchema.pre('save', function (next) {
+stockSchema.pre('save', async function (next) {
+    // auto-fill categoryId from item if unset
+    if (!this.categoryId && this.itemId) {
+        try {
+            const Item = mongoose.model('Item');
+            const item = await Item.findById(this.itemId).select('categoryId').lean();
+            if (item && item.categoryId) {
+                this.categoryId = item.categoryId;
+            }
+        } catch (err) {
+            // ignore if item lookup fails
+        }
+    }
+
     // Calculate available quantity
-    this.availableQuantity = this.quantity - this.reservedQuantity;
+    this.availableQty = (this.quantity || 0) - (this.reservedQty || 0);
 
     // Calculate total value
-    this.totalValue = Math.round(this.quantity * this.unitCost);
+    this.totalValue = Math.round((this.quantity || 0) * (this.unitCost || 0));
 
     // Check low stock
-    this.isLowStock = this.availableQuantity <= this.reorderLevel;
+    this.isLowStock = this.availableQty <= (this.reorderLevel || 0);
 
     next();
 });
@@ -145,16 +150,27 @@ stockSchema.statics.updateQuantity = async function (itemId, quantityChange, opt
             unit: options.unit || 'piece',
             unitCost: options.unitCost || 0,
             reorderLevel: options.reorderLevel || 0,
+            status: 'Available',          // finished goods are available by default
         });
+        console.log('stock.updateQuantity: created new stock for', itemId, 'batch', options.batch);
+    } else if (!stock.status) {
+        // ensure existing record has a status so it is included in normal queries
+        stock.status = 'Available';
     }
 
     const newQuantity = stock.quantity + quantityChange;
+    console.log('stock.updateQuantity: item', itemId, 'current qty', stock.quantity, 'change', quantityChange, '=> newQty', newQuantity);
 
     if (newQuantity < 0) {
         throw new Error('Insufficient stock');
     }
 
     stock.quantity = newQuantity;
+    if (quantityChange > 0) {
+        stock.status = 'Available';
+    }
+    // maintain derived available qty immediately in case we bypass save hook
+    stock.availableQty = (stock.quantity || 0) - (stock.reservedQty || 0);
 
     if (quantityChange > 0) {
         stock.lastInDate = new Date();
@@ -183,11 +199,11 @@ stockSchema.statics.reserveStock = async function (itemId, quantity, session) {
         throw new Error('Stock not found');
     }
 
-    if (stock.availableQuantity < quantity) {
+    if (stock.availableQty < quantity) {
         throw new Error('Insufficient available stock');
     }
 
-    stock.reservedQuantity += quantity;
+    stock.reservedQty += quantity;
     await stock.save({ session });
 
     return stock;
@@ -201,7 +217,7 @@ stockSchema.statics.releaseReservedStock = async function (itemId, quantity, ses
         throw new Error('Stock not found');
     }
 
-    stock.reservedQuantity = Math.max(0, stock.reservedQuantity - quantity);
+    stock.reservedQty = Math.max(0, stock.reservedQty - quantity);
     await stock.save({ session });
 
     return stock;
@@ -212,6 +228,53 @@ stockSchema.statics.getLowStock = function () {
     return this.find({ isLowStock: true, status: 'Available' })
         .populate('itemId', 'name sku')
         .lean();
+};
+
+// Static method to aggregate stock by item (useful for finished goods overview)
+stockSchema.statics.aggregateByItem = function (filter = {}) {
+    const match = { ...filter };
+    // ensure we only include available records by default
+    if (!match.status) match.status = 'Available';
+
+    return this.aggregate([
+        { $match: match },
+        {
+            $group: {
+                _id: '$itemId',
+                quantity: { $sum: '$quantity' },
+                reservedQty: { $sum: '$reservedQty' },
+                // compute availability from quantities rather than sum stored field, safer when docs are stale
+                availableQty: { $sum: { $subtract: ['$quantity', '$reservedQty'] } },
+                isLowStock: { $max: '$isLowStock' },
+                categoryId: { $first: '$categoryId' },
+                unit: { $first: '$unit' },
+                lastUpdated: { $max: '$updatedAt' },
+            },
+        },
+        {
+            $lookup: {
+                from: 'items',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'item',
+            },
+        },
+        { $unwind: '$item' },
+        {
+            $project: {
+                _id: 1,
+                itemId: '$item',
+                quantity: 1,
+                reservedQty: 1,
+                availableQty: 1,
+                isLowStock: 1,
+                // prefer stored categoryId but fall back to item.categoryId
+                categoryId: { $ifNull: ['$categoryId', '$item.categoryId'] },
+                unit: 1,
+                lastUpdated: 1,
+            },
+        },
+    ]);
 };
 
 const Stock = mongoose.model('Stock', stockSchema);

@@ -9,8 +9,79 @@ import BrickBatch from '../manufacturing/batch.model.js';
 import Estimate from '../procurement/estimate.model.js';
 // import GoodsReceipt from '../inventory/receipt.model.js'; // Not available
 import Vendor from '../procurement/vendor.model.js';
+import SalesOrder from '../sales/salesOrder.model.js';
+import LabourPayment from '../payment/labourPayment.model.js';
 // import Kiln from '../manufacturing/kiln.model.js'; // Not available
 // import Warehouse from '../inventory/warehouse.model.js'; // Not available
+
+// ============================================
+// DASHBOARD KPIs  (single endpoint for ErpDashboard)
+// ============================================
+
+export const getDashboardKPIs = asyncHandler(async (req, res) => {
+    const [
+        stockAgg,
+        customerAgg,
+        transportAgg,
+        labourAgg,
+        vendorAgg,
+    ] = await Promise.all([
+        // 1. Total Stock — sum all quantity across Stock documents
+        Stock.aggregate([
+            { $group: { _id: null, totalQty: { $sum: '$quantity' } } },
+        ]),
+
+        // 2. Customer Pending — sum balanceDue where paymentStatus Unpaid or Partial
+        SalesOrder.aggregate([
+            {
+                $match: {
+                    isDeleted: { $ne: true },
+                    paymentStatus: { $in: ['Unpaid', 'Partial'] },
+                },
+            },
+            { $group: { _id: null, total: { $sum: '$balanceDue' } } },
+        ]),
+
+        // 3. Transport Pending — sum transportCost where paidStatus != 'Paid'
+        SalesOrder.aggregate([
+            {
+                $match: {
+                    isDeleted: { $ne: true },
+                    transportCost: { $gt: 0 },
+                    'transportDetails.paidStatus': { $ne: 'Paid' },
+                },
+            },
+            { $group: { _id: null, total: { $sum: '$transportCost' } } },
+        ]),
+
+        // 4. Labour Pending — sum amount from PENDING labour payment records
+        LabourPayment.aggregate([
+            { $match: { isDeleted: { $ne: true }, paymentStatus: 'PENDING' } },
+            { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]),
+
+        // 5. Vendor Pending — sum totalAmountLocked from open POs
+        PurchaseOrder.aggregate([
+            {
+                $match: {
+                    status: { $in: ['Draft', 'Approved', 'PartiallyReceived'] },
+                },
+            },
+            { $group: { _id: null, total: { $sum: '$totalAmountLocked' } } },
+        ]),
+    ]);
+
+    res.json({
+        success: true,
+        data: {
+            totalStock: stockAgg[0]?.totalQty ?? 0,
+            customerPending: customerAgg[0]?.total ?? 0,
+            transportPending: transportAgg[0]?.total ?? 0,
+            labourPending: labourAgg[0]?.total ?? 0,
+            vendorPending: vendorAgg[0]?.total ?? 0,
+        },
+    });
+});
 
 // ============================================
 // DASHBOARD OVERVIEW
@@ -115,8 +186,8 @@ export const getStockLevelsReport = asyncHandler(async (req, res) => {
                 itemCategory: '$item.categoryId',
                 warehouseName: '$warehouse.name',
                 quantity: 1,
-                reservedQuantity: 1,
-                availableQuantity: 1,
+                reservedQty: 1,
+                availableQty: 1,
                 reorderLevel: 1,
                 isLowStock: 1,
                 unit: 1,
@@ -326,6 +397,7 @@ export const getVendorPerformanceReport = asyncHandler(async (req, res) => {
 });
 
 export default {
+    getDashboardKPIs,
     getDashboardOverview,
     getStockLevelsReport,
     getOpenPurchaseOrdersReport,

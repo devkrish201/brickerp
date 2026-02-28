@@ -18,6 +18,7 @@ import {
     // Purchase Orders
     getPurchaseOrders,
     getPurchaseOrder,
+    getPOTotalsByVendor,
     createPurchaseOrder,
     updatePurchaseOrder,
     approvePurchaseOrder,
@@ -842,6 +843,27 @@ router.post('/estimates/calculate', authorize(...ROLE_GROUPS.PROCUREMENT_TEAM), 
  *         description: Purchase orders retrieved successfully
  */
 router.get('/purchase-orders', authorize(...ROLE_GROUPS.INTERNAL_STAFF), getPurchaseOrders);
+
+// totals for a vendor's purchase orders
+/**
+ * @swagger
+ * /procurement/purchase-orders/vendor/{vendorId}/totals:
+ *   get:
+ *     summary: Get aggregate PO amounts for a vendor
+ *     tags: [Procurement]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: vendorId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Totals returned
+ */
+router.get('/purchase-orders/vendor/:vendorId/totals', authorize(...ROLE_GROUPS.INTERNAL_STAFF), getPOTotalsByVendor);
 
 /**
 

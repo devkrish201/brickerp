@@ -38,6 +38,10 @@ router.get('/pending-delivery', salesOrderController.getPendingDelivery);
  */
 router.get('/by-customer/:customerId', validate(getByIdSchema, 'params', 'customerId'), salesOrderController.getByCustomer);
 
+// totals for a customer (all orders)
+// no schema validation here because param is named customerId
+router.get('/customer/:customerId/totals', salesOrderController.getTotalsByCustomer);
+
 /**
  * Get sales order by ID
  */

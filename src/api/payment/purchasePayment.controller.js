@@ -288,3 +288,47 @@ export const getPaymentsByPurchaseOrder = asyncHandler(async (req, res) => {
 
     res.json({ success: true, data: payments });
 });
+
+/**
+ * Get purchase payments grouped by PO for a vendor
+ * GET /api/v1/purchase-payments/vendor/:vendorId
+ * Returns both raw payment list and per-PO summary (total paid, pending, last paid date)
+ */
+export const getPaymentsByVendor = asyncHandler(async (req, res) => {
+    const vendorId = req.params.vendorId;
+
+    const payments = await PurchasePayment.find({
+        vendorId,
+        isDeleted: { $ne: true }
+    })
+        .sort({ paymentDate: -1 })
+        .populate('purchaseOrderId', 'poNumber netAmount status');
+
+    // build summary per PO
+    const summaryMap = {};
+    payments.forEach(p => {
+        const po = p.purchaseOrderId;
+        if (!po || !po._id) return;
+        const key = po._id.toString();
+        if (!summaryMap[key]) {
+            summaryMap[key] = {
+                poId: po._id,
+                poNumber: po.poNumber,
+                poTotal: po.netAmount || 0,
+                totalPaid: 0,
+                lastPaymentDate: null,
+            };
+        }
+        summaryMap[key].totalPaid += p.amount || 0;
+        if (!summaryMap[key].lastPaymentDate || new Date(p.paymentDate) > new Date(summaryMap[key].lastPaymentDate)) {
+            summaryMap[key].lastPaymentDate = p.paymentDate;
+        }
+    });
+
+    const summaries = Object.values(summaryMap).map(item => ({
+        ...item,
+        pendingAmount: item.poTotal - item.totalPaid,
+    }));
+
+    res.json({ success: true, data: { payments, summaries } });
+});

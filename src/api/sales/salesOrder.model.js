@@ -15,13 +15,7 @@ import { auditPlugin, notesPlugin, softDeletePlugin } from '../../utils/auditPlu
 
 // Sales Order Status Constants
 export const SALES_ORDER_STATUS = {
-    DRAFT: 'Draft',
-    CONFIRMED: 'Confirmed',
-    PROCESSING: 'Processing',
-    READY_FOR_DISPATCH: 'Ready_For_Dispatch',
-    PARTIALLY_DELIVERED: 'Partially_Delivered',
     DELIVERED: 'Delivered',
-    INVOICED: 'Invoiced',
     CANCELLED: 'Cancelled',
 };
 
@@ -155,7 +149,7 @@ const salesOrderSchema = new mongoose.Schema({
     status: {
         type: String,
         enum: Object.values(SALES_ORDER_STATUS),
-        default: SALES_ORDER_STATUS.DRAFT,
+        default: SALES_ORDER_STATUS.DELIVERED,
         index: true,
     },
 
@@ -169,10 +163,15 @@ const salesOrderSchema = new mongoose.Schema({
         default: false,
     },
     transportDetails: {
+        // link to a transport item (e.g. vehicle/driver record) from catalog
+        transportItemId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Item',
+        },
         distanceKm: Number,
         vehicleType: {
             type: String,
-            // enum: Object.values(TRANSPORT_VEHICLE),
+            enum: Object.values(TRANSPORT_VEHICLE),
         },
         // Vehicle / driver info (persisted so API returns these fields)
         vehicleNumber: String,
@@ -184,10 +183,11 @@ const salesOrderSchema = new mongoose.Schema({
         manualCost: Number,
         // Final transport cost saved on the order
         transportCost: Number,
-        // Linked trip
-        tripId: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'TransportTrip',
+        // payment status for transport charges
+        paidStatus: {
+            type: String,
+            enum: ['Unpaid', 'Paid'],
+            default: 'Unpaid',
         },
     },
 
@@ -330,43 +330,62 @@ salesOrderSchema.index({ orderDate: -1 });
 salesOrderSchema.index({ expectedDeliveryDate: 1 });
 salesOrderSchema.index({ paymentStatus: 1, status: 1 });
 salesOrderSchema.index({ createdBy: 1 });
+// indexes useful for transport reporting
+salesOrderSchema.index({ 'transportDetails.transportItemId': 1 });
+salesOrderSchema.index({ 'transportDetails.paidStatus': 1 });
 
 // Plugins
 salesOrderSchema.plugin(mongoosePaginate);
 salesOrderSchema.plugin(auditPlugin);
 salesOrderSchema.plugin(softDeletePlugin);
 
+// helper to create a unique sales‑order number based on current year/month
+salesOrderSchema.statics.generateNextSoNumber = async function () {
+    const year = new Date().getFullYear();
+    const month = String(new Date().getMonth() + 1).padStart(2, '0');
+
+    // find the latest number for this period
+    const lastSO = await this.findOne({ soNumber: new RegExp(`^SO-${year}${month}`) })
+        .sort({ soNumber: -1 })
+        .select('soNumber');
+
+    let nextNumber = 1;
+    if (lastSO) {
+        const match = lastSO.soNumber.match(/SO-\d{6}-(\d+)/);
+        if (match) nextNumber = parseInt(match[1]) + 1;
+    }
+
+    let candidate = `SO-${year}${month}-${String(nextNumber).padStart(4, '0')}`;
+    // loop until we find one that does not yet exist
+    while (await this.exists({ soNumber: candidate })) {
+        nextNumber++;
+        candidate = `SO-${year}${month}-${String(nextNumber).padStart(4, '0')}`;
+    }
+    return candidate;
+};
+
 // Pre-save: Generate SO number and calculate totals
 salesOrderSchema.pre('save', async function (next) {
-    // Generate SO number
+    // only generate if not already assigned (controller may pre-populate)
     if (this.isNew && !this.soNumber) {
-        const year = new Date().getFullYear();
-        const month = String(new Date().getMonth() + 1).padStart(2, '0');
-        const lastSO = await mongoose.model('SalesOrder')
-            .findOne({ soNumber: new RegExp(`^SO-${year}${month}`) })
-            .sort({ soNumber: -1 })
-            .select('soNumber');
-
-        let nextNumber = 1;
-        if (lastSO) {
-            const match = lastSO.soNumber.match(/SO-\d{6}-(\d+)/);
-            if (match) nextNumber = parseInt(match[1]) + 1;
+        try {
+            this.soNumber = await mongoose.model('SalesOrder').generateNextSoNumber();
+        } catch (err) {
+            return next(err);
         }
-        let candidateNumber = `SO-${year}${month}-${String(nextNumber).padStart(4, '0')}`;
-
-        // Check if the candidate number already exists, and increment if necessary
-        while (await mongoose.model('SalesOrder').findOne({ soNumber: candidateNumber })) {
-            nextNumber++;
-            candidateNumber = `SO-${year}${month}-${String(nextNumber).padStart(4, '0')}`;
-        }
-
-        this.soNumber = candidateNumber;
     }
 
     // Calculate item totals
     let subtotal = 0;
     let totalDiscount = 0;
     let totalTax = 0;
+
+    // Ensure transport payment status is initialized
+    if (this.includeTransport && this.transportDetails) {
+        if (!this.transportDetails.paidStatus) {
+            this.transportDetails.paidStatus = 'Unpaid';
+        }
+    }
 
     for (const item of this.items) {
         const baseAmount = item.qty * item.unitPrice;
@@ -428,7 +447,6 @@ salesOrderSchema.pre('save', async function (next) {
 
     // Auto-update status based on delivery
     if (this.status === SALES_ORDER_STATUS.CONFIRMED ||
-        this.status === SALES_ORDER_STATUS.PROCESSING ||
         this.status === SALES_ORDER_STATUS.PARTIALLY_DELIVERED) {
         const allDelivered = this.items.every(item => item.fullyDelivered);
         const anyDelivered = this.items.some(item => (item.deliveredQty || 0) > 0);
@@ -440,8 +458,98 @@ salesOrderSchema.pre('save', async function (next) {
         }
     }
 
+    // if order is already marked Delivered but lines still have pending qty,
+    // treat as complete and generate stock deltas accordingly
+    if (this.status === SALES_ORDER_STATUS.DELIVERED) {
+        for (const item of this.items) {
+            const prevDelivered = item.deliveredQty || 0;
+            const pending = (item.qty || 0) - prevDelivered;
+            if (pending > 0) {
+                // mark fully delivered
+                item.deliveredQty = item.qty;
+                item.pendingQty = 0;
+                item.fullyDelivered = true;
+                // record delta (will be included later by _stockDeltas logic)
+                this._stockDeltas = this._stockDeltas || [];
+                this._stockDeltas.push({ itemId: item.itemId, qty: -pending });
+            }
+        }
+    }
+
+    // compute stock quantity changes for delivered items
+    // this._stockDeltas will be available in post-save hook
+    this._stockDeltas = [];
+    const SalesOrderModel = mongoose.model('SalesOrder');
+    if (this.isNew) {
+        // new document – deduct entire ordered quantity immediately
+        for (const it of this.items) {
+            const d = it.qty || 0;
+            if (d > 0) {
+                this._stockDeltas.push({ itemId: it.itemId, qty: -d });
+            }
+        }
+    } else {
+        // existing order – adjust stock based on quantity changes only
+        const orig = await SalesOrderModel.findById(this._id).lean();
+        if (orig) {
+            for (const it of this.items) {
+                const prev = orig.items.find(i => i._id && it._id && i._id.toString() === it._id.toString());
+                const prevQty = prev ? (prev.qty || 0) : 0;
+                const deltaQty = (it.qty || 0) - prevQty;
+                if (deltaQty !== 0) {
+                    this._stockDeltas.push({ itemId: it.itemId, qty: -deltaQty });
+                }
+            }
+        }
+    }
+
+    // perform availability check before allowing the save if there will be
+    // any negative delta (i.e. stock deduction).
+    if (this._stockDeltas.length) {
+        const Stock = mongoose.model('Stock');
+        for (const d of this._stockDeltas) {
+            if (!d.itemId) continue;
+            if (d.qty < 0) {
+                const needed = -d.qty;
+                const agg = await Stock.aggregateByItem({ itemId: d.itemId });
+                const avail = agg.length ? (agg[0].availableQty || 0) : 0;
+                if (avail < needed) {
+                    const err = new Error('Insufficient stock for delivery');
+                    err.status = 400;
+                    // abort save
+                    return next(err);
+                }
+            }
+        }
+    }
+
     next();
 });
+
+// Instance: reconcile stock for any pending qty when order is marked Delivered
+salesOrderSchema.methods.reconcileDeliveredStock = async function () {
+    if (this.status !== SALES_ORDER_STATUS.DELIVERED) return;
+    let changed = false;
+    const Stock = mongoose.model('Stock');
+    for (const it of this.items || []) {
+        const pending = (it.qty || 0) - (it.deliveredQty || 0);
+        if (pending > 0 && it.itemId) {
+            try {
+                await Stock.updateQuantity(it.itemId, -pending);
+                await Stock.releaseReservedStock(it.itemId, pending);
+            } catch (e) {
+                // ignore failures
+            }
+            it.deliveredQty = it.qty;
+            it.pendingQty = 0;
+            it.fullyDelivered = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        await this.save();
+    }
+};
 
 // Instance: Confirm order
 salesOrderSchema.methods.confirm = async function (userId) {
@@ -451,6 +559,25 @@ salesOrderSchema.methods.confirm = async function (userId) {
     this.status = SALES_ORDER_STATUS.CONFIRMED;
     this.confirmedBy = userId;
     this.confirmedAt = new Date();
+
+    // reservation no longer needed; stock was deducted on creation
+    // (kept here for backward-compatibility if other code still relies on it)
+    // try {
+    //     const Stock = mongoose.model('Stock');
+    //     for (const it of this.items || []) {
+    //         const qty = it.qty || 0;
+    //         if (qty > 0 && it.itemId) {
+    //             try {
+    //                 await Stock.reserveStock(it.itemId, qty);
+    //             } catch (e) {
+    //                 console.error('Failed to reserve stock for sales order', e.message || e);
+    //             }
+    //         }
+    //     }
+    // } catch (e) {
+    //     console.error('Error reserving stock during order confirmation', e);
+    // }
+
     await this.save();
 
     // Update customer stats
@@ -469,6 +596,23 @@ salesOrderSchema.methods.cancel = async function (userId, reason) {
         this.status === SALES_ORDER_STATUS.INVOICED) {
         throw new Error('Delivered/Invoiced orders cannot be cancelled');
     }
+    // return pending quantity to stock (cancelled orders free up inventory)
+    try {
+        const Stock = mongoose.model('Stock');
+        for (const it of this.items || []) {
+            const pending = (it.qty || 0) - (it.deliveredQty || 0);
+            if (pending > 0 && it.itemId) {
+                try {
+                    await Stock.updateQuantity(it.itemId, pending);
+                } catch (e) {
+                    console.error('Error returning stock during cancellation', e.message || e);
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error handling stock during cancellation', e);
+    }
+
     this.status = SALES_ORDER_STATUS.CANCELLED;
     this.cancelledBy = userId;
     this.cancelledAt = new Date();
@@ -491,7 +635,11 @@ salesOrderSchema.post('save', async function (doc) {
     try {
         if (doc.status !== SALES_ORDER_STATUS.DELIVERED) return;
 
-        const SalesInvoiceModel = mongoose.model('SalesInvoice');
+        // only attempt invoice logic if the model has been registered
+        let SalesInvoiceModel;
+        try { SalesInvoiceModel = mongoose.model('SalesInvoice'); } catch (_) { SalesInvoiceModel = null; }
+        if (!SalesInvoiceModel) return;
+
         const existing = await SalesInvoiceModel.findOne({ salesOrderId: doc._id });
         if (existing) return; // already invoiced
 
@@ -577,7 +725,9 @@ salesOrderSchema.post('save', async function (doc) {
 // Post-save hook: sync transport OperationalExpense for every saved SalesOrder
 salesOrderSchema.post('save', async function (doc) {
     try {
-        const OperationalExpense = mongoose.model('OperationalExpense');
+        let OperationalExpense;
+        try { OperationalExpense = mongoose.model('OperationalExpense'); } catch (_) { OperationalExpense = null; }
+        if (!OperationalExpense) return;
 
         // ----- TRANSPORT EXPENSE (category: Travel) -----
         const hasTransport = !!(doc.includeTransport && (doc.transportCost || 0) > 0);
@@ -658,6 +808,25 @@ salesOrderSchema.post('save', async function (doc) {
 
     } catch (err) {
         console.error('Failed to sync transport/labour expense after SO save:', err);
+    }
+});
+
+// Post-save hook: apply stock changes computed in pre-save
+salesOrderSchema.post('save', async function (doc) {
+    if (!doc._stockDeltas || !doc._stockDeltas.length) return;
+    try {
+        const Stock = mongoose.model('Stock');
+        for (const d of doc._stockDeltas) {
+            if (!d.itemId) continue;
+            const qtyChange = d.qty;
+            try {
+                await Stock.updateQuantity(d.itemId, qtyChange);
+            } catch (e) {
+                console.error('Stock update error for sales order delivery:', e);
+            }
+        }
+    } catch (e) {
+        console.error('error applying stock deltas after SO save', e);
     }
 });
 

@@ -15,11 +15,8 @@ import { auditPlugin, notesPlugin, softDeletePlugin } from '../../utils/auditPlu
 // Payment Status
 export const CUSTOMER_PAYMENT_STATUS = {
     PENDING: 'Pending',
-    PROCESSING: 'Processing',
     COMPLETED: 'Completed',
-    FAILED: 'Failed',
     CANCELLED: 'Cancelled',
-    REFUNDED: 'Refunded',
 };
 
 /**
@@ -64,7 +61,7 @@ const customerPaymentSchema = new mongoose.Schema({
     // ========== PAYMENT METHOD ==========
     paymentMethod: {
         type: String,
-        enum: ['CASH', 'CHEQUE', 'NEFT', 'RTGS', 'UPI', 'IMPS', 'BANK_TRANSFER', 'CARD', 'OTHER'],
+        enum: ['CASH', 'UPI', 'BANK_TRANSFER'],
         required: [true, 'Payment method is required'],
     },
     // Method-specific details

@@ -312,8 +312,25 @@ const customerController = {
                 };
             }
 
-            const customer = new Customer(customerData);
-            await customer.save();
+            // create document and save, retry once if customerCode duplicate occurs
+            let customer = new Customer(customerData);
+            console.log('about to save customer, data:', customerData);
+            try {
+                await customer.save();
+                console.log('saved customer with code', customer.customerCode);
+            } catch (saveErr) {
+                // if our pre-validate hook somehow still generated an existing code,
+                // try regenerating and saving one more time
+                if (saveErr && saveErr.code === 11000 && saveErr.keyValue && saveErr.keyValue.customerCode) {
+                    console.log('duplicate code on first save, retrying');
+                    customer.customerCode = undefined;
+                    await customer.validate();
+                    await customer.save();
+                    console.log('saved after retry with code', customer.customerCode);
+                } else {
+                    throw saveErr;
+                }
+            }
 
             // Create initial ledger entry - disabled (CustomerLedger model not available)
             // await CustomerLedger.create({

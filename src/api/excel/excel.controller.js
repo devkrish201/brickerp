@@ -293,8 +293,8 @@ export const exportStock = asyncHandler(async (req, res) => {
         itemSku: s.itemId?.sku || '',
         warehouseName: s.warehouseId?.name || '',
         quantity: s.quantity,
-        reservedQuantity: s.reservedQuantity,
-        availableQuantity: s.availableQuantity,
+        reservedQty: s.reservedQty,
+        availableQty: s.availableQty,
         unit: s.unit,
         reorderLevel: s.reorderLevel,
         isLowStock: s.isLowStock ? 'Yes' : 'No',
@@ -302,8 +302,8 @@ export const exportStock = asyncHandler(async (req, res) => {
     }));
 
     const columns = [
-        'itemName', 'itemSku', 'warehouseName', 'quantity', 'reservedQuantity',
-        'availableQuantity', 'unit', 'reorderLevel', 'isLowStock', 'totalValuePaise',
+        'itemName', 'itemSku', 'warehouseName', 'quantity', 'reservedQty',
+        'availableQty', 'unit', 'reorderLevel', 'isLowStock', 'totalValuePaise',
     ];
 
     const buffer = exportToExcel(exportData, columns);

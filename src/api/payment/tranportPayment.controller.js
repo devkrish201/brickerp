@@ -1,4 +1,5 @@
 import TransportPayment from './tranportPayment.model.js';
+import SalesOrder from '../sales/salesOrder.model.js';
 import { asyncHandler } from '../../middleware/error.js';
 
 /**
@@ -113,6 +114,18 @@ export const createTransportPayment = asyncHandler(async (req, res) => {
     });
 
     await payment.save();
+
+    // if this payment is tied to a sales order, mark its transport as paid
+    if (salesOrderId) {
+        try {
+            await SalesOrder.findByIdAndUpdate(salesOrderId, {
+                'transportDetails.paidStatus': 'Paid',
+            });
+        } catch (e) {
+            console.error('Failed to update sales order transport paid status', e.message || e);
+        }
+    }
+
     res.status(201).json(payment);
 });
 
@@ -168,6 +181,17 @@ export const updateTransportPayment = asyncHandler(async (req, res) => {
     if (paymentDate) payment.paymentDate = paymentDate;
     if (paymentMethod) payment.paymentMethod = paymentMethod;
     if (paymentStatus) payment.paymentStatus = paymentStatus;
+
+    // if payment is now completed and associated with an order, mark it paid
+    if (paymentStatus === 'COMPLETED' && payment.salesOrderId) {
+        try {
+            await SalesOrder.findByIdAndUpdate(payment.salesOrderId, {
+                'transportDetails.paidStatus': 'Paid',
+            });
+        } catch (e) {
+            console.error('Failed to update sales order transport paid status on update', e.message || e);
+        }
+    }
 
     // Recalculate total if any amount field changes
     if (baseAmount !== undefined || additionalCharges !== undefined || discount !== undefined || tax !== undefined) {

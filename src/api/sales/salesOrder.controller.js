@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import SalesOrder, { TRANSPORT_VEHICLE, TRANSPORT_FLAT_RATE_CARD } from './salesOrder.model.js';
 import Customer from './customer.model.js';
 import Item from '../catalog/item.model.js';
@@ -142,7 +143,7 @@ const salesOrderController = {
                 sortOrder = 'desc'
             } = req.query;
 
-            const query = { deleted: { $ne: true } };
+            const query = {}; // plugin will exclude soft-deleted records
 
             if (search) {
                 query.$or = [
@@ -157,6 +158,16 @@ const salesOrderController = {
 
             if (status) {
                 query.status = status;
+            }
+
+            if (req.query.transportItemId) {
+                query['transportDetails.transportItemId'] = req.query.transportItemId;
+            }
+            if (req.query.transportPaidStatus) {
+                query['transportDetails.paidStatus'] = req.query.transportPaidStatus;
+            }
+            if (req.query.driverName) {
+                query['transportDetails.driverName'] = { $regex: req.query.driverName, $options: 'i' };
             }
 
             if (fromDate || toDate) {
@@ -175,6 +186,14 @@ const salesOrderController = {
             };
 
             const result = await SalesOrder.paginate(query, options);
+
+            // strip status field from returned documents
+            const docs = (result.docs || []).map(o => {
+                const obj = o.toObject ? o.toObject() : { ...o };
+                delete obj.status;
+                return obj;
+            });
+            result.docs = docs;
 
             res.json({
                 success: true,
@@ -205,11 +224,61 @@ const salesOrderController = {
      *       404:
      *         description: Order not found
      */
+
+    async getTotalsByCustomer(req, res, next) {
+        try {
+            const { customerId } = req.params;
+
+            if (!customerId) {
+                return res.status(400).json({ success: false, message: 'customerId required' });
+            }
+
+            if (!mongoose.isValidObjectId(customerId)) {
+                // invalid id format
+                return res.status(400).json({ success: false, message: 'Invalid customerId' });
+            }
+
+            const objId = new mongoose.Types.ObjectId(customerId);
+            let data;
+            try {
+                const agg = await SalesOrder.aggregate([
+                    { $match: { customerId: objId, isDeleted: { $ne: true } } },
+                    {
+                        $group: {
+                            _id: null,
+                            totalAmount: { $sum: '$grandTotal' },
+                            totalPending: { $sum: '$balanceDue' }
+                        }
+                    }
+                ]);
+                data = agg[0] || { totalAmount: 0, totalPending: 0 };
+            } catch (aggErr) {
+                // aggregation failed; log and fallback to manual summation
+                // eslint-disable-next-line no-console
+                console.error('aggregation failed in getTotalsByCustomer', aggErr);
+                const orders = await SalesOrder.find({ customerId: objId, isDeleted: { $ne: true } })
+                    .select('grandTotal balanceDue')
+                    .lean();
+                data = orders.reduce((acc, o) => {
+                    acc.totalAmount += o.grandTotal || 0;
+                    acc.totalPending += o.balanceDue || 0;
+                    return acc;
+                }, { totalAmount: 0, totalPending: 0 });
+            }
+            res.json({ success: true, data });
+        } catch (error) {
+            // log for debugging
+            // eslint-disable-next-line no-console
+            console.error('getTotalsByCustomer failed', error);
+            next(error);
+        }
+    },
+
     async getById(req, res, next) {
         try {
             const { id } = req.params;
 
-            const order = await SalesOrder.findOne({ _id: id, deleted: { $ne: true } })
+            let order = await SalesOrder.findOne({ _id: id })
                 .populate('customerId', 'name phone email gstin billingAddress deliveryAddresses')
                 .populate('lineItems.itemId', 'name sku');
 
@@ -220,9 +289,15 @@ const salesOrderController = {
                 });
             }
 
+            // ensure stock is reconciled if somehow items still pending
+            await order.reconcileDeliveredStock();
+
+            const obj = order.toObject ? order.toObject() : { ...order };
+            delete obj.status;
+
             res.json({
                 success: true,
-                data: order,
+                data: obj,
             });
         } catch (error) {
             next(error);
@@ -252,6 +327,9 @@ const salesOrderController = {
     async create(req, res, next) {
         try {
             const orderData = req.body;
+            // status & order number are managed internally; ignore anything passed from client
+            if ('status' in orderData) delete orderData.status;
+            if ('soNumber' in orderData) delete orderData.soNumber;
 
             // Fetch customer details
             const customer = await Customer.findOne({
@@ -292,11 +370,11 @@ const salesOrderController = {
                     ...li,
                     itemName: item?.name || li.itemName,
                     hsnCode: li.hsnCode || item?.hsnCode,
-                    taxRate: li.taxRate || item?.taxRate || 0,
+                    taxRate: 0, // ignore taxes now that front-end no longer collects them
                     qty: li.quantity,
                     unit: li.unit,
                     unitPrice: li.unitPrice,
-                    discountPercent: li.discountPercent,
+                    discountPercent: 0, // ignore discounts
                 };
             });
 
@@ -338,8 +416,28 @@ const salesOrderController = {
                 orderData.transportCost = orderData.transportDetails.transportCost || orderData.transportDetails.calculatedCost || 0;
             }
 
+            // ensure backend assigns a unique order number (override any client value)
             const order = new SalesOrder(orderData);
-            await order.save();
+
+            // generate once before saving to reduce chances of duplicate key error
+            order.soNumber = await SalesOrder.generateNextSoNumber();
+
+            // try saving; if a duplicate key error occurs (race condition) regenerate and retry
+            let attempts = 0;
+            while (true) {
+                try {
+                    await order.save();
+                    break;
+                } catch (err) {
+                    // only handle duplicate key on soNumber
+                    if (err.code === 11000 && err.keyPattern && err.keyPattern.soNumber && attempts < 5) {
+                        attempts++;
+                        order.soNumber = await SalesOrder.generateNextSoNumber();
+                        continue;
+                    }
+                    throw err;
+                }
+            }
 
             // Auto-create an OperationalExpense for transport when transport is present - DISABLED
             // try {
@@ -393,6 +491,8 @@ const salesOrderController = {
         try {
             const { id } = req.params;
             const updateData = req.body;
+            // clients must not be able to change the SO number after creation
+            if ('soNumber' in updateData) delete updateData.soNumber;
 
             const order = await SalesOrder.findOne({ _id: id, deleted: { $ne: true } });
 
@@ -408,6 +508,15 @@ const salesOrderController = {
                 return res.status(400).json({
                     success: false,
                     message: `Cannot update order in ${order.status} status. Only Draft orders can be modified.`,
+                });
+            }
+
+            // prevent clients from changing status through this endpoint; use
+            // the dedicated status route which has proper stock/transition checks
+            if (updateData.status && updateData.status !== order.status) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Status changes are not allowed here; use /sales/orders/:id/status',
                 });
             }
 
@@ -435,11 +544,11 @@ const salesOrderController = {
                         ...li,
                         itemName: item?.name || li.itemName,
                         hsnCode: li.hsnCode || item?.hsnCode,
-                        taxRate: li.taxRate || item?.taxRate || 0,
+                        taxRate: 0, // ignore taxes from client
                         qty: li.quantity,
                         unit: li.unit,
                         unitPrice: li.unitPrice,
-                        discountPercent: li.discountPercent,
+                        discountPercent: 0, // ignore discounts
                     };
                 });
             }
@@ -532,26 +641,42 @@ const salesOrderController = {
                 });
             }
 
-            // Update status
-            order.status = status;
-
-            // Track status history
-            if (!order.statusHistory) {
-                order.statusHistory = [];
-            }
-            order.statusHistory.push({
-                status,
-                timestamp: new Date(),
-                userId: req.user?._id,
-                reason,
-            });
-
-            // Update delivery date if delivered
-            if (status === 'Delivered') {
+            // handle some transitions via model helpers so logic stays in schema
+            if (status === SALES_ORDER_STATUS.CONFIRMED) {
+                // confirm() will set status, save, update customer stats and reserve stock
+                await order.confirm(req.user?._id);
+            } else if (status === SALES_ORDER_STATUS.CANCELLED) {
+                // cancel() handles reservation release
+                await order.cancel(req.user?._id, reason || '');
+            } else if (status === SALES_ORDER_STATUS.DELIVERED) {
+                // stock already adjusted at creation; just update status history
+                order.status = status;
+                if (!order.statusHistory) order.statusHistory = [];
+                order.statusHistory.push({ status, timestamp: new Date(), userId: req.user?._id, reason });
                 order.actualDeliveryDate = new Date();
-            }
+                await order.save();
+            } else {
+                // generic status update path
+                order.status = status;
 
-            await order.save();
+                // Track status history
+                if (!order.statusHistory) {
+                    order.statusHistory = [];
+                }
+                order.statusHistory.push({
+                    status,
+                    timestamp: new Date(),
+                    userId: req.user?._id,
+                    reason,
+                });
+
+                // Update delivery date if delivered
+                if (status === SALES_ORDER_STATUS.DELIVERED) {
+                    order.actualDeliveryDate = new Date();
+                }
+
+                await order.save();
+            }
 
             res.json({
                 success: true,
@@ -781,23 +906,20 @@ const salesOrderController = {
                 });
             }
 
-            // Can only delete Draft orders, otherwise soft delete / cancel
-            if (order.status === 'Draft') {
-                await SalesOrder.deleteOne({ _id: id });
+            // Always perform a soft delete; the softDelete plugin will set isDeleted flag
+            // (original behavior attempted hard delete only for drafts, but status field
+            // has been removed so we simply soft-delete everything).
+            if (typeof order.softDelete === 'function') {
+                await order.softDelete(req.user?._id || null);
                 return res.json({
                     success: true,
                     message: 'Sales order deleted',
                     data: { _id: id, deleted: true },
                 });
-            } else {
-                order.status = 'Cancelled';
-                await order.save();
-                return res.json({
-                    success: true,
-                    message: 'Sales order cancelled successfully',
-                    data: order,
-                });
             }
+            // fallback to hard delete if softDelete not available
+            await SalesOrder.deleteOne({ _id: id });
+            return res.json({ success: true, message: 'Sales order deleted', data: { _id: id, deleted: true } });
         } catch (error) {
             next(error);
         }
@@ -865,7 +987,6 @@ const salesOrderController = {
         try {
             const orders = await SalesOrder.find({
                 status: { $in: ['Confirmed', 'Processing', 'Ready', 'Ready_For_Dispatch', 'Dispatched', 'Partially_Delivered'] },
-                deleted: { $ne: true },
             })
                 .populate('customerId', 'name phone')
                 .select('orderNumber customerName status expectedDeliveryDate grandTotal')

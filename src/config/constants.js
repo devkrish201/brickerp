@@ -63,15 +63,12 @@ export const PO_STATUS = {
 
 
 
-
-
 // Brick Batch Status – simplified to three values
 export const BATCH_STATUS = {
     DRAFT: 'Draft',
     PENDING: 'Pending',
     COMPLETED: 'Completed',
 };
-
 
 
 

@@ -24,7 +24,13 @@ export const getLabourPayments = asyncHandler(async (req, res) => {
         page: parseInt(page),
         limit: parseInt(limit),
         sort: { paymentDate: -1 },
-        populate: ['labourerId', 'batchId', 'createdBy', 'modifiedBy'],
+        populate: [
+            { path: 'labourerId', select: 'name phone address' },
+            { path: 'batchId', select: 'batchCode' },
+            { path: 'batchIds', select: 'batchCode' },
+            { path: 'createdBy', select: 'name email' },
+            { path: 'modifiedBy', select: 'name email' },
+        ],
     };
 
     const result = await LabourPayment.paginate(query, options);
@@ -36,10 +42,11 @@ export const getLabourPayments = asyncHandler(async (req, res) => {
  */
 export const getLabourPayment = asyncHandler(async (req, res) => {
     const payment = await LabourPayment.findById(req.params.id).populate([
-        'labourerId',
-        'batchId',
-        'createdBy',
-        'modifiedBy',
+        { path: 'labourerId', select: 'name phone address' },
+        { path: 'batchId', select: 'batchCode' },
+        { path: 'batchIds', select: 'batchCode' },
+        { path: 'createdBy', select: 'name email' },
+        { path: 'modifiedBy', select: 'name email' },
     ]);
 
     if (!payment) {
@@ -55,6 +62,7 @@ export const getLabourPayment = asyncHandler(async (req, res) => {
 export const createLabourPayment = asyncHandler(async (req, res) => {
     const {
         batchId,
+        batchIds,
         labourerId,
         labourerName,
         labourerPhone,
@@ -79,6 +87,7 @@ export const createLabourPayment = asyncHandler(async (req, res) => {
     const payment = new LabourPayment({
         paymentNumber,
         batchId,
+        batchIds,
         labourerId,
         labourerName,
         labourerPhone,
@@ -108,6 +117,7 @@ export const updateLabourPayment = asyncHandler(async (req, res) => {
     const {
         labourerId,
         batchId,
+        batchIds,
         labourerName,
         labourerPhone,
         labourerAddress,
@@ -137,6 +147,7 @@ export const updateLabourPayment = asyncHandler(async (req, res) => {
     // Update fields
     if (labourerId) payment.labourerId = labourerId;
     if (batchId) payment.batchId = batchId;
+    if (batchIds) payment.batchIds = batchIds;
     if (labourerName) payment.labourerName = labourerName;
     if (labourerPhone) payment.labourerPhone = labourerPhone;
     if (labourerAddress) payment.labourerAddress = labourerAddress;

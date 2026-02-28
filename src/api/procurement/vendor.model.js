@@ -60,7 +60,6 @@ const vendorSchema = new mongoose.Schema({
     // Payment terms
     paymentTerms: {
         type: String,
-        enum: ['Immediate', 'Net7', 'Net15', 'Net30', 'Net45', 'Net60', 'Custom'],
         default: 'Net30',
     },
     customPaymentDays: Number,

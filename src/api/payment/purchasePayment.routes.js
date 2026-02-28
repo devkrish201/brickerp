@@ -8,6 +8,7 @@ import {
     updatePurchasePayment,
     deletePurchasePayment,
     getPaymentsByPurchaseOrder,
+    getPaymentsByVendor,
     updatePurchasePaymentStatus,
 } from './purchasePayment.controller.js';
 
@@ -426,5 +427,8 @@ router.delete('/:id', authorize(ROLE_GROUPS.PAYMENT_DELETE), deletePurchasePayme
  *         description: Payments retrieved successfully
  */
 router.get('/po/:poId', authorize(ROLE_GROUPS.PAYMENT_READ), getPaymentsByPurchaseOrder);
+
+// vendor-specific payment listing
+router.get('/vendor/:vendorId', authorize(ROLE_GROUPS.PAYMENT_READ), getPaymentsByVendor);
 
 export default router;

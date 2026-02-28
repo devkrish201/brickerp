@@ -8,6 +8,7 @@ import {
     updateSalesPayment,
     deleteSalesPayment,
     getPaymentsBySalesOrder,
+    getPaymentsByCustomer,
     updateSalesPaymentStatus,
 } from './salesPayment.controller.js';
 
@@ -418,5 +419,30 @@ router.delete('/:id', authorize(ROLE_GROUPS.PAYMENT_DELETE), deleteSalesPayment)
  *         description: Payments retrieved successfully
  */
 router.get('/so/:soId', authorize(ROLE_GROUPS.PAYMENT_READ), getPaymentsBySalesOrder);
+
+/**
+ * @swagger
+ * /api/v1/sales-payments/customer/{customerId}:
+ *   get:
+ *     summary: Get sales payments by customer (with per-order summary)
+ *     tags: [SalesPayments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: customerId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Payments retrieved successfully
+ *       404:
+ *         description: No payments found
+ */
+router.get('/customer/:customerId', authorize(ROLE_GROUPS.PAYMENT_READ), getPaymentsByCustomer);
+
+// customer-specific summary
+router.get('/customer/:customerId', authorize(ROLE_GROUPS.PAYMENT_READ), getPaymentsByCustomer);
 
 export default router;

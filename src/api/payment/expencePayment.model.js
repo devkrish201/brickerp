@@ -37,7 +37,7 @@ const expensePaymentSchema = new mongoose.Schema({
     },
     paymentMethod: {
         type: String,
-        enum: ['CASH', 'CHEQUE', 'BANK_TRANSFER', 'NEFT', 'UPI', 'CREDIT_CARD', 'OTHER'],
+        enum: ['CASH', 'BANK_TRANSFER', 'UPI'],
         required: [true, 'Payment method is required'],
     },
     paymentStatus: {

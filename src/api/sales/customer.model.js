@@ -80,9 +80,12 @@ const customerSchema = new mongoose.Schema({
     },
     // Store payment terms as an object (creditDays, discountPercent, discountDays)
     paymentTerms: {
-        creditDays: { type: Number, default: 0 },
-        discountPercent: { type: Number, default: 0 },
-        discountDays: { type: Number, default: 0 },
+        type: new mongoose.Schema({
+            creditDays: { type: Number, default: 30 }, // default credit period
+            discountPercent: { type: Number, default: 0 },
+            discountDays: { type: Number, default: 0 },
+        }, { _id: false }),
+        default: { creditDays: 30, discountPercent: 0, discountDays: 0 },
     },
     customPaymentDays: Number,
 
@@ -159,7 +162,7 @@ const customerSchema = new mongoose.Schema({
     },
     preferredPaymentMethod: {
         type: String,
-        enum: ['CASH', 'CHEQUE', 'NEFT', 'RTGS', 'UPI', 'CREDIT'],
+        enum: ['CASH', 'UPI', 'Bank_Transfer'],
         default: 'CASH',
     },
 
@@ -222,10 +225,57 @@ customerSchema.pre('validate', function (next) {
 });
 
 // Pre-validate hook: generate customerCode for new documents if missing
+// We use a dedicated counter document to guarantee uniqueness even under
+// heavy concurrency or after soft-deletes. This replaces earlier count/agg
+// logic which could still collide when the database already contained codes.
+// The counter collection is very small and atomic via findOneAndUpdate.
+
+// ensure counter model exists (shared across files)
+const counterSchema = new mongoose.Schema({
+    _id: String,
+    seq: { type: Number, default: 0 },
+}, { collection: 'counters' });
+let Counter;
+try {
+    Counter = mongoose.model('Counter');
+} catch (e) {
+    Counter = mongoose.model('Counter', counterSchema);
+}
+
 customerSchema.pre('validate', async function (next) {
     if (this.isNew && !this.customerCode) {
-        const count = await mongoose.model('Customer').countDocuments();
-        this.customerCode = `CUST-${String(count + 1).padStart(5, '0')}`;
+        // bump counter atomically
+        const result = await Counter.findOneAndUpdate(
+            { _id: 'customerCode' },
+            { $inc: { seq: 1 } },
+            { upsert: true, new: true }
+        );
+        let nextNum = result.seq;
+
+        // if we just created the counter (seq===1) or it's very small,
+        // make sure it's at least one larger than the current highest
+        // code in the collection; this handles existing data from before
+        // the counter was introduced.
+        if (nextNum === 1) {
+            try {
+                const agg = await mongoose.model('Customer').aggregate([
+                    { $match: { customerCode: { $regex: /^CUST-/ } } },
+                    { $project: { n: { $toInt: { $substr: ['$customerCode', 5, -1] } } } },
+                    { $sort: { n: -1 } },
+                    { $limit: 1 }
+                ]);
+                if (agg.length && agg[0].n + 1 > nextNum) {
+                    nextNum = agg[0].n + 1;
+                    // persist the adjusted value so counter doesn't reset next time
+                    await Counter.findByIdAndUpdate('customerCode', { seq: nextNum });
+                }
+            } catch (e) {
+                // ignore; if aggregation fails we'll just start at 1 and
+                // collision will be handled by retry logic in controller
+            }
+        }
+
+        this.customerCode = `CUST-${String(nextNum).padStart(5, '0')}`;
     }
     next();
 });

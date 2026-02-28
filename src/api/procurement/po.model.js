@@ -100,6 +100,14 @@ const purchaseOrderSchema = new mongoose.Schema({
     // Status
     status: {
         type: String,
+        enum: ['Delivered', 'Cancelled'],
+        default: 'Delivered',
+        index: true,
+    },
+
+
+    paymentStatus: {
+        type: String,
         enum: Object.values(PO_STATUS),
         default: PO_STATUS.DRAFT,
         index: true,
@@ -149,7 +157,10 @@ const purchaseOrderSchema = new mongoose.Schema({
     },
 
     // Terms and conditions
-    paymentTerms: String,
+    paymentTerms: {
+        type: String,
+        default: '',
+    },
     deliveryTerms: String,
     termsAndConditions: String,
 
@@ -279,15 +290,15 @@ purchaseOrderSchema.pre('save', async function (next) {
     this.pendingValue = this.netAmount - receivedValue;
 
     // Auto-update status based on received quantities
-    if (this.status === PO_STATUS.APPROVED ||
-        this.status === PO_STATUS.PARTIALLY_RECEIVED) {
+    if (this.paymentStatus === PO_STATUS.APPROVED ||
+        this.paymentStatus === PO_STATUS.PARTIALLY_RECEIVED) {
         const allReceived = this.items.every(item => item.fullyReceived);
         const anyReceived = this.items.some(item => item.receivedQty > 0);
 
         if (allReceived) {
-            this.status = PO_STATUS.COMPLETED;
+            this.paymentStatus = PO_STATUS.COMPLETED;
         } else if (anyReceived) {
-            this.status = PO_STATUS.PARTIALLY_RECEIVED;
+            this.paymentStatus = PO_STATUS.PARTIALLY_RECEIVED;
         }
     }
 
@@ -297,7 +308,7 @@ purchaseOrderSchema.pre('save', async function (next) {
 // Post-save hook: auto-create purchase invoice when PO is completed or partially received
 purchaseOrderSchema.post('save', async function (doc) {
     // Only create invoice if status is COMPLETED or PARTIALLY_RECEIVED and no invoice exists yet
-    if (doc.status === PO_STATUS.COMPLETED || doc.status === PO_STATUS.PARTIALLY_RECEIVED) {
+    if (doc.paymentStatus === PO_STATUS.COMPLETED || doc.paymentStatus === PO_STATUS.PARTIALLY_RECEIVED) {
         try {
             const PurchaseInvoiceModel = mongoose.model('PurchaseInvoice');
             const existingInvoice = await PurchaseInvoiceModel.findOne({
@@ -324,11 +335,11 @@ purchaseOrderSchema.post('save', async function (doc) {
 
 // Instance method to approve PO (locks prices)
 purchaseOrderSchema.methods.approve = async function (userId) {
-    if (this.status !== PO_STATUS.DRAFT) {
+    if (this.paymentStatus !== PO_STATUS.DRAFT) {
         throw new Error('Only draft POs can be approved');
     }
 
-    this.status = PO_STATUS.APPROVED;
+    this.paymentStatus = PO_STATUS.APPROVED;
     this.approvedBy = userId;
     this.approvedAt = new Date();
 
@@ -340,7 +351,7 @@ purchaseOrderSchema.methods.approve = async function (userId) {
 
 // Instance method to cancel PO
 purchaseOrderSchema.methods.cancel = async function (userId, reason) {
-    if (this.status === PO_STATUS.COMPLETED) {
+    if (this.paymentStatus === PO_STATUS.COMPLETED) {
         throw new Error('Completed POs cannot be cancelled');
     }
 
@@ -348,7 +359,7 @@ purchaseOrderSchema.methods.cancel = async function (userId, reason) {
         throw new Error('POs with received goods cannot be cancelled');
     }
 
-    this.status = PO_STATUS.CANCELLED;
+    this.paymentStatus = PO_STATUS.CANCELLED;
     this.notes.push({
         text: `PO cancelled: ${reason}`,
         createdBy: userId,

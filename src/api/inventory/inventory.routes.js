@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { validate } from '../../middleware/validate.js';
 import { authenticate } from '../../middleware/auth.js';
 import Stock from './stock.model.js';
@@ -14,21 +15,35 @@ router.use(authenticate);
  */
 router.get('/stock', async (req, res, next) => {
     try {
-        const { page = 1, limit = 10, itemId, status, lowStock } = req.query;
+        const { page = 1, limit = 10, itemId, status, lowStock, categoryId, groupBy } = req.query;
 
         const query = {};
         if (itemId) query.itemId = itemId;
         if (status) query.status = status;
         if (lowStock === 'true' || lowStock === true) query.isLowStock = true;
+        if (categoryId) query.categoryId = categoryId;
+
+        // support aggregated view by item (ignore pagination for now)
+        if (groupBy === 'item') {
+            const docs = await Stock.aggregateByItem(query);
+            return res.json({
+                success: true,
+                data: docs,
+                pagination: {
+                    total: docs.length,
+                    pages: 1,
+                    currentPage: 1,
+                    limit: docs.length,
+                },
+            });
+        }
 
         const options = {
             page: parseInt(page),
             limit: parseInt(limit),
-            populate: ['itemId'],
+            populate: ['itemId', 'categoryId'],
             lean: true,
         };
-
-
 
         const result = await Stock.paginate(query, options);
 
@@ -57,6 +72,27 @@ router.get('/stock', async (req, res, next) => {
 });
 
 /**
+ * GET /api/v1/inventory/stock/item/:itemId
+ * Return aggregated stock result for a single item (quantity, available, etc.)
+ */
+router.get('/stock/item/:itemId', async (req, res, next) => {
+    try {
+        const itemId = req.params.itemId;
+        let objId;
+        try {
+            objId = new mongoose.Types.ObjectId(itemId);
+        } catch (e) {
+            return res.status(400).json({ success: false, message: 'Invalid itemId' });
+        }
+        const docs = await Stock.aggregateByItem({ itemId: objId });
+        const data = docs.length ? docs[0] : null;
+        res.json({ success: true, data });
+    } catch (error) {
+        next(error);
+    }
+});
+
+/**
  * GET /api/v1/inventory/stock/alerts
  * Low stock alerts (backwards compatibility)
  */
@@ -76,7 +112,8 @@ router.get('/stock/alerts', async (req, res, next) => {
 router.get('/stock/:id', async (req, res, next) => {
     try {
         const stock = await Stock.findById(req.params.id)
-            .populate('itemId');
+            .populate('itemId')
+            .populate('categoryId');
 
         if (!stock) {
             return res.status(404).json({

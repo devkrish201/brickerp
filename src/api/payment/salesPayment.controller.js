@@ -722,3 +722,42 @@ export const getPaymentsBySalesOrder = asyncHandler(async (req, res) => {
 
     res.json({ success: true, data: payments });
 });
+
+// grouped by sales order for a customer
+export const getPaymentsByCustomer = asyncHandler(async (req, res) => {
+    const customerId = req.params.customerId;
+
+    const payments = await SalesPayment.find({
+        customerId,
+        isDeleted: { $ne: true }
+    })
+        .sort({ paymentDate: -1 })
+        .populate('salesOrderId', 'soNumber grandTotal status');
+
+    const summaryMap = {};
+    payments.forEach(p => {
+        const so = p.salesOrderId;
+        if (!so || !so._id) return;
+        const key = so._id.toString();
+        if (!summaryMap[key]) {
+            summaryMap[key] = {
+                soId: so._id,
+                soNumber: so.soNumber,
+                soTotal: so.grandTotal || 0,
+                totalPaid: 0,
+                lastPaymentDate: null,
+            };
+        }
+        summaryMap[key].totalPaid += p.amount || 0;
+        if (!summaryMap[key].lastPaymentDate || new Date(p.paymentDate) > new Date(summaryMap[key].lastPaymentDate)) {
+            summaryMap[key].lastPaymentDate = p.paymentDate;
+        }
+    });
+
+    const summaries = Object.values(summaryMap).map(item => ({
+        ...item,
+        pendingAmount: item.soTotal - item.totalPaid,
+    }));
+
+    res.json({ success: true, data: { payments, summaries } });
+});
